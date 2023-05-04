@@ -26,7 +26,7 @@ override DEFAULT_LD := ld
 $(eval $(call DEFAULT_VAR,LD,$(DEFAULT_LD)))
 
 # User controllable C flags.
-override DEFAULT_CFLAGS := -g -O2 -pipe
+override DEFAULT_CFLAGS := -g -O2 -pipe -I../base/usr/include -I../kernel
 $(eval $(call DEFAULT_VAR,CFLAGS,$(DEFAULT_CFLAGS)))
 
 # User controllable C preprocessor flags. We set none by default.
@@ -111,15 +111,15 @@ $(KERNEL): $(OBJ)
 
 # Compilation rules for *.c files.
 %.o: %.c limine.h
-	$(CC) $(CFLAGS) $(CPPFLAGS) -Ibase/usr/include -I../kernel -Lbase/usr/lib/deps -Wl,-Bstatic -l:*.a -c $< -o $@
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@ -DPRINTF_ALIAS_STANDARD_FUNCTION_NAMES_HARD
 
 # Compilation rules for *.S files.
 %.o: %.S limine.h
-	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@ -DPRINTF_ALIAS_STANDARD_FUNCTION_NAMES_HARD
 
 # Compilation rules for *.asm (nasm) files.
 %.o: %.asm
-	nasm $(NASMFLAGS) $< -o $@
+	nasm $(NASMFLAGS) $< -o $@ -DPRINTF_ALIAS_STANDARD_FUNCTION_NAMES_HARD
 
 # Remove object files and the final executable.
 .PHONY: clean
