@@ -1,5 +1,8 @@
 {
     "files.associations": {
-        "*.in": "cpp"
+        "*.in": "cpp",
+        "*.c": "c",
+        "*.h": "c",
+        "compare": "c"
     }
 }

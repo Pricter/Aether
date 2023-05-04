@@ -27,7 +27,7 @@ $(eval $(call DEFAULT_VAR,LD,$(DEFAULT_LD)))
 
 # User controllable C flags.
 override DEFAULT_CFLAGS := -g -O2 -pipe -I../base/usr/include -I../kernel
-$(eval $(call DEFAULT_VAR,CFLAGS,$(DEFAULT_CFLAGS)))
+$(eval $(call DEFAULT_VAR,CFLAGS,$(DEFAULT_CFLAGS) -nostdinc))
 
 # User controllable C preprocessor flags. We set none by default.
 override DEFAULT_CPPFLAGS :=
