@@ -201,7 +201,7 @@ size_t arch_cpu_mhz(void) {
  * has been surprisingly accurate and good enough to use the TSC as
  * our only wall clock source.
  */
-void arch_clock_initialize(void) {
+void clock_initialize(void) {
 	printf("tsc: Calibrating system timestamp counter\n");
 	arch_boot_time = read_cmos();
 	uintptr_t end_lo, end_hi;

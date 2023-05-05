@@ -1,10 +1,12 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <limine.h>
+
 #include <deps/printf.h>
 #include <kernel/version.h>
+#include <kernel/process.h>
 
-extern void arch_clock_initialize(void);
+extern void clock_initialize(void);
 
 static volatile struct limine_terminal_request terminal_request = {
     .id = LIMINE_TERMINAL_REQUEST,
@@ -16,6 +18,12 @@ void putchar_(char c) {
     struct limine_terminal *terminal = terminal_request.response->terminals[0];
     char s[2] = {c, '\0'};
     terminal_request.response->write(terminal, s, 2);
+}
+
+void set_core_base(uintptr_t base) {
+    asm volatile ("wrmsr" : : "c" (0xc0000101), "d" ((uint32_t)(base >> 32)), "a" ((uint32_t)(base & 0xFFFFFFFF)));
+    asm volatile ("wrmsr" : : "c" (0xc0000102), "d" ((uint32_t)(base >> 32)), "a" ((uint32_t)(base & 0xFFFFFFFF)));
+    asm volatile ("swapgs");
 }
 
 void _start(void) {
@@ -30,8 +38,11 @@ void _start(void) {
         __kernel_build_date,
         __kernel_build_time);
 
+    /* Initialize GS base */
+    set_core_base((uintptr_t)&processor_local_data[0]);
 
-    arch_clock_initialize();
+    /* Time and TSC and get the initial boot time from RTC. */
+    clock_initialize();
 
     // We are done. Hang up
     asm ("cli");
