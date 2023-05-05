@@ -27,7 +27,10 @@ $(eval $(call DEFAULT_VAR,LD,$(DEFAULT_LD)))
 
 # User controllable C flags.
 override DEFAULT_CFLAGS := -g -O2 -pipe -I../base/usr/include -I../kernel
-$(eval $(call DEFAULT_VAR,CFLAGS,$(DEFAULT_CFLAGS) -nostdinc))
+$(eval $(call DEFAULT_VAR,CFLAGS,$(DEFAULT_CFLAGS) -nostdinc -DPRINTF_ALIAS_STANDARD_FUNCTION_NAMES_HARD))
+
+KERNEL_CFLAGS  = -DPRINTF_ALIAS_STANDARD_FUNCTION_NAMES_HARD -D_KERNEL_ -DKERNEL_ARCH=x86_64
+KERNEL_CFLAGS += -DKERNEL_GIT_TAG=$(shell ../util/git-tag.sh)
 
 # User controllable C preprocessor flags. We set none by default.
 override DEFAULT_CPPFLAGS :=
@@ -111,15 +114,15 @@ $(KERNEL): $(OBJ)
 
 # Compilation rules for *.c files.
 %.o: %.c limine.h
-	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@ -DPRINTF_ALIAS_STANDARD_FUNCTION_NAMES_HARD
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@ $(KERNEL_CFLAGS)
 
 # Compilation rules for *.S files.
 %.o: %.S limine.h
-	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@ -DPRINTF_ALIAS_STANDARD_FUNCTION_NAMES_HARD
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@ $(KERNEL_CFLAGS)
 
 # Compilation rules for *.asm (nasm) files.
 %.o: %.asm
-	nasm $(NASMFLAGS) $< -o $@ -DPRINTF_ALIAS_STANDARD_FUNCTION_NAMES_HARD
+	nasm $(NASMFLAGS) $< -o $@
 
 # Remove object files and the final executable.
 .PHONY: clean
