@@ -1,8 +1,8 @@
 #include <errno.h>
 #include <deps/printf.h>
-#include <kernel/arch/ports.h>
+#include <kernel/ports.h>
 #include <stdint.h>
-#include <libc/memory.h>
+#include <memory.h>
 
 uint64_t arch_boot_time = 0; /**< Time (in seconds) according to the cmos right before we using TSC */
 uint64_t tsc_basis_time = 0; /**< Accumulated time (in microseconds) on the TSC, when we timed it; eg. how long did boot take */
@@ -165,7 +165,7 @@ static inline uint64_t read_tsc(void) {
  * @brief Exported interface to read timestamp counter.
  *
  * Used by various things in the kernel to get a quick performance
- * timer value. This is always scaled by @c arch_cpu_mhz when it
+ * timer value. This is always scaled by @c cpu_mhz when it
  * needs to be converted to something user-friendly.
  */
 uint64_t arch_perf_timer(void) {
@@ -174,12 +174,8 @@ uint64_t arch_perf_timer(void) {
 
 /**
  * @brief What to scale performance counter times by.
- *
- * I've called this "arch_cpu_mhz" but I don't know if that's
- * always going to be true, so this may need to be renamed at
- * some point...
  */
-size_t arch_cpu_mhz(void) {
+size_t cpu_mhz(void) {
 	return tsc_mhz;
 }
 

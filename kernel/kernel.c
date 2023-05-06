@@ -4,8 +4,11 @@
 
 #include <deps/printf.h>
 #include <kernel/version.h>
+#include <kernel/mmu.h>
 
 extern void clock_initialize(void);
+
+extern void mmu_init(void);
 
 extern unsigned long tsc_mhz;
 
@@ -27,6 +30,12 @@ void set_core_base(uintptr_t base) {
     asm volatile ("swapgs");
 }
 
+/**
+ * The kernel start function. The kernel begins executing from
+ * this function, this is called by the limine bootloader.
+ * 
+ * It prints the kernel information and initializes the kernel
+*/
 void _start(void) {
     printf("%s %d.%d.%d-%s %s compiled by \"%s\" on \"%s %s\"\n",
         __kernel_name,
@@ -42,7 +51,13 @@ void _start(void) {
     /* Time and TSC and get the initial boot time from RTC. */
     clock_initialize();
 
+    /* Initialize memory */
     mmu_init();
+
+    /* Test if the frame allocator is working */
+    for(int i = 0; i < 2; i++) {
+        printf("%p\n", mmu_request_frame());
+    }
 
     // We are done. Hang up
     asm ("cli");
