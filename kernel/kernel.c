@@ -4,9 +4,10 @@
 
 #include <deps/printf.h>
 #include <kernel/version.h>
-#include <kernel/process.h>
 
 extern void clock_initialize(void);
+
+extern unsigned long tsc_mhz;
 
 static volatile struct limine_terminal_request terminal_request = {
     .id = LIMINE_TERMINAL_REQUEST,
@@ -38,11 +39,10 @@ void _start(void) {
         __kernel_build_date,
         __kernel_build_time);
 
-    /* Initialize GS base */
-    set_core_base((uintptr_t)&processor_local_data[0]);
-
     /* Time and TSC and get the initial boot time from RTC. */
     clock_initialize();
+
+    mmu_init();
 
     // We are done. Hang up
     asm ("cli");
