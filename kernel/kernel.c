@@ -8,6 +8,7 @@
 
 extern void clock_initialize(void);
 
+extern void gdt_init(void);
 extern void mmu_init(void);
 
 extern unsigned long tsc_mhz;
@@ -50,6 +51,8 @@ void _start(void) {
 
     /* Time and TSC and get the initial boot time from RTC. */
     clock_initialize();
+
+    gdt_init();
 
     /* Initialize memory */
     mmu_init();
