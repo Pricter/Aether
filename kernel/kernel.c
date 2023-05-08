@@ -5,11 +5,13 @@
 #include <deps/printf.h>
 #include <kernel/version.h>
 #include <kernel/mmu.h>
+#include <kernel/irq.h>
 
 extern void clock_initialize(void);
 
 extern void gdt_init(void);
 extern void mmu_init(void);
+extern void idt_init(void);
 
 extern unsigned long tsc_mhz;
 
@@ -56,6 +58,9 @@ void _start(void) {
 
     /* Initialize memory */
     mmu_init();
+
+    idt_init();
+    asm("int $0x0"); // For testing
 
     /* Test if the frame allocator is working */
     for(int i = 0; i < 2; i++) {

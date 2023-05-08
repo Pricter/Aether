@@ -11,7 +11,7 @@ all-hdd: $(IMAGE_NAME).hdd
 
 .PHONY: run
 run: $(IMAGE_NAME).iso
-	qemu-system-x86_64 -M q35 -m 2G -cdrom $(IMAGE_NAME).iso -boot d -D qlog.txt -d int -no-reboot -enable-kvm
+	qemu-system-x86_64 -M q35 -m 2G -cdrom $(IMAGE_NAME).iso -boot d -D qlog.txt -d int -no-reboot
 
 .PHONY: run-uefi
 run-uefi: ovmf $(IMAGE_NAME).iso

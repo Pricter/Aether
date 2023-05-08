@@ -12,6 +12,12 @@
         "vector": "c",
         "string_view": "c",
         "initializer_list": "c",
-        "valarray": "c"
+        "valarray": "c",
+        "bit": "c",
+        "*.tcc": "c",
+        "functional": "c",
+        "limits": "c",
+        "ratio": "c",
+        "thread": "c"
     }
 }
