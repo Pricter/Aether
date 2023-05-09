@@ -6,6 +6,8 @@
 #include <kernel/version.h>
 #include <kernel/mmu.h>
 #include <kernel/irq.h>
+#include <string.h>
+#include <kernel/symboltable.h>
 
 extern void clock_initialize(void);
 
@@ -60,12 +62,16 @@ void _start(void) {
     mmu_init();
 
     idt_init();
-    asm("int $0x0"); // For testing
 
-    /* Test if the frame allocator is working */
-    for(int i = 0; i < 2; i++) {
-        printf("%p\n", mmu_request_frame());
-    }
+	printf("symbols: Start at %p\n", kernel_symbols_start);
+	printf("symbols: End at %p\n", kernel_symbols_end);
+
+	printf("Kernel symbols:\n");
+	kernel_symbol_t* k = (kernel_symbol_t*)&kernel_symbols_start;
+	while((uintptr_t)k < (uintptr_t)&kernel_symbols_end) {
+		printf("\t(%p) %s\n", k->addr, k->name);
+		k = (kernel_symbol_t*)((uintptr_t)k + sizeof(*k) + strlen(k->name) + 1);
+	}
 
     // We are done. Hang up
     asm ("cli");

@@ -176,6 +176,8 @@
 .type sprintf, @function
 .extern _start
 .type _start, @function
+.extern strlen
+.type strlen, @function
 .extern total_memory
 .type total_memory, @function
 .extern tsc_basis_time
@@ -371,6 +373,8 @@ kernel_symbols_start:
 .asciz "sprintf"
 .quad _start
 .asciz "_start"
+.quad strlen
+.asciz "strlen"
 .quad total_memory
 .asciz "total_memory"
 .quad tsc_basis_time
