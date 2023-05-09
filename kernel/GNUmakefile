@@ -106,7 +106,7 @@ limine.h:
 	curl -Lo $@ https://github.com/limine-bootloader/limine/raw/trunk/limine.h
 
 # Link rules for the final kernel executable.
-$(KERNEL): $(OBJ)
+$(KERNEL): $(OBJ) symbols.o
 	$(LD) $(OBJ) $(LDFLAGS) -o $@
 
 # Include header dependencies.
@@ -124,10 +124,17 @@ $(KERNEL): $(OBJ)
 %.o: %.asm
 	nasm $(NASMFLAGS) $< -o $@
 
+symbols.o: $(OBJ) ../util/gensym.py
+	$(LD) $(LDFLAGS) -o kernelTemp.elf $(OBJ)
+	nm kernelTemp.elf -g | python ../util/gensym.py > symbols.S
+	$(CC) -c symbols.S -o $@
+	rm -f kernelTemp.elf
+
 # Remove object files and the final executable.
 .PHONY: clean
 clean:
 	rm -rf $(KERNEL) $(OBJ) $(HEADER_DEPS)
+	rm -f symbols.o
 
 .PHONY: distclean
 distclean: clean

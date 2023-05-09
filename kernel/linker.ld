@@ -38,6 +38,10 @@ SECTIONS
 
     .data : {
         *(.data .data.*)
+        *(.symbols)
+        PROVIDE(kernel_symbols_start = .);
+        PROVIDE(kernel_symbols_end = .);
+        PROVIDE(bss_start = .);
     } :data
 
     /* NOTE: .bss needs to be the last thing mapped to :data, otherwise lots of */
