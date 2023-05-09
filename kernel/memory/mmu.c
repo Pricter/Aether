@@ -52,6 +52,27 @@ uint64_t freeMemory = 0; /* Amount of memory free */
 /* A variable to keep track of the next last allocated frame */
 uintptr_t lastFrame = 0;
 
+/* Size of each page, standard intel is 4KiB */
+#define PAGE_SIZE 0x1000
+
+/* The flags in an entry set using macro functions */
+/**
+ * ExecuteDisable: If the NXE bit is set in the EFER register, then
+ * instructions are not allowed to be executed at addresses within
+ * whatever page XD is set. if EFER.NXE is 0, then the XD bit is
+ * reserved and should be set to 0.
+*/
+typedef enum {
+	Present = 0, /* If the entry is present */
+	ReadWrite =  1, /* If the entry has write access */
+	UserSupervisor = 2, /* Priviledge level */
+	WriteThrough = 3, /* If bit is set, then write-through caching is set */
+	CacheDisable = 4, /* If this is set, then the page will not be cached */
+	Accessed = 5, /* If the entry was read during virtual address translation */
+	PageSize = 7, /* If this is set then the page will be a 4MiB page */
+	ExecuteDisable = 63 /* See above */
+} PAGE_FLAGS;
+
 /**
  * mmu_frame_clear()
  * 
