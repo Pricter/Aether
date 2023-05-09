@@ -11,8 +11,9 @@ def entry(sym):
     print(f'.{size} {sym}')
     print(f'.asciz "{sym}"')
 
-ignore = ['abs', 'kernel_symbols_start', 'kernel_symbols_end']
+ignore = ['kernel_symbols_start', 'kernel_symbols_end']
 lines = [x.strip().split(' ')[2] for x in sys.stdin]
+lines = [line for line in lines if line not in ignore]
 
 print('.section .symbols\n')
 for name in lines:

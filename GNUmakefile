@@ -73,6 +73,7 @@ $(IMAGE_NAME).hdd: limine kernel
 clean:
 	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).hdd
 	$(MAKE) -C kernel clean
+	rm qlog.txt
 
 .PHONY: distclean
 distclean: clean
