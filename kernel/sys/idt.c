@@ -1,3 +1,9 @@
+/**
+ * idt.c - Licensed under the MIT License
+ * 
+ * initialize the idt and functions for setting the handler
+*/
+
 #include <kernel/regs.h>
 #include <kernel/irq.h>
 #include <stdint.h>

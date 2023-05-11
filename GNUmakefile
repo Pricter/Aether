@@ -1,29 +1,22 @@
-# Nuke built-in rules and variables.
-override MAKEFLAGS += -rR
+ISO_NAME = jeff
 
-override IMAGE_NAME := jeff
+.PHONY: all all-hdd
+all: $(ISO_NAME).iso
 
-.PHONY: all
-all: $(IMAGE_NAME).iso
+all-hdd: $(ISO_NAME).hdd
 
-.PHONY: all-hdd
-all-hdd: $(IMAGE_NAME).hdd
+.PHONY: run run-uefi run-hdd run-hdd-uefi
+run: $(ISO_NAME).iso
+	qemu-system-x86_64 -M q35 -m 2G -cdrom $(ISO_NAME).iso -boot d -D qlog.txt -d int -no-reboot
 
-.PHONY: run
-run: $(IMAGE_NAME).iso
-	qemu-system-x86_64 -M q35 -m 2G -cdrom $(IMAGE_NAME).iso -boot d -D qlog.txt -d int -no-reboot
+run-uefi: ovmf $(ISO_NAME).iso
+	qemu-system-x86_64 -M q35 -m 2G -bios ovmf/OVMF.fd -cdrom $(ISO_NAME).iso -boot d
 
-.PHONY: run-uefi
-run-uefi: ovmf $(IMAGE_NAME).iso
-	qemu-system-x86_64 -M q35 -m 2G -bios ovmf/OVMF.fd -cdrom $(IMAGE_NAME).iso -boot d
+run-hdd: $(ISO_NAME).hdd
+	qemu-system-x86_64 -M q35 -m 2G -hda $(ISO_NAME).hdd
 
-.PHONY: run-hdd
-run-hdd: $(IMAGE_NAME).hdd
-	qemu-system-x86_64 -M q35 -m 2G -hda $(IMAGE_NAME).hdd
-
-.PHONY: run-hdd-uefi
-run-hdd-uefi: ovmf $(IMAGE_NAME).hdd
-	qemu-system-x86_64 -M q35 -m 2G -bios ovmf/OVMF.fd -hda $(IMAGE_NAME).hdd
+run-hdd-uefi: ovmf $(ISO_NAME).hdd
+	qemu-system-x86_64 -M q35 -m 2G -bios ovmf/OVMF.fd -hda $(ISO_NAME).hdd
 
 ovmf:
 	mkdir -p ovmf
@@ -37,7 +30,7 @@ limine:
 kernel:
 	$(MAKE) -C kernel
 
-$(IMAGE_NAME).iso: limine kernel
+$(ISO_NAME).iso: limine kernel
 	rm -rf iso_root
 	mkdir -p iso_root
 	cp kernel/kernel.elf \
@@ -46,18 +39,18 @@ $(IMAGE_NAME).iso: limine kernel
 		-no-emul-boot -boot-load-size 4 -boot-info-table \
 		--efi-boot limine-cd-efi.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
-		iso_root -o $(IMAGE_NAME).iso
-	limine/limine-deploy $(IMAGE_NAME).iso
+		iso_root -o $(ISO_NAME).iso
+	limine/limine-deploy $(ISO_NAME).iso
 	rm -rf iso_root
 
-$(IMAGE_NAME).hdd: limine kernel
-	rm -f $(IMAGE_NAME).hdd
-	dd if=/dev/zero bs=1M count=0 seek=64 of=$(IMAGE_NAME).hdd
-	parted -s $(IMAGE_NAME).hdd mklabel gpt
-	parted -s $(IMAGE_NAME).hdd mkpart ESP fat32 2048s 100%
-	parted -s $(IMAGE_NAME).hdd set 1 esp on
-	limine/limine-deploy $(IMAGE_NAME).hdd
-	sudo losetup -Pf --show $(IMAGE_NAME).hdd >loopback_dev
+$(ISO_NAME).hdd: limine kernel
+	rm -f $(ISO_NAME).hdd
+	dd if=/dev/zero bs=1M count=0 seek=64 of=$(ISO_NAME).hdd
+	parted -s $(ISO_NAME).hdd mklabel gpt
+	parted -s $(ISO_NAME).hdd mkpart ESP fat32 2048s 100%
+	parted -s $(ISO_NAME).hdd set 1 esp on
+	limine/limine-deploy $(ISO_NAME).hdd
+	sudo losetup -Pf --show $(ISO_NAME).hdd >loopback_dev
 	sudo mkfs.fat -F 32 `cat loopback_dev`p1
 	mkdir -p img_mount
 	sudo mount `cat loopback_dev`p1 img_mount
@@ -71,7 +64,7 @@ $(IMAGE_NAME).hdd: limine kernel
 
 .PHONY: clean
 clean:
-	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).hdd
+	rm -rf iso_root $(ISO_NAME).iso $(ISO_NAME).hdd
 	$(MAKE) -C kernel clean
 	rm qlog.txt
 

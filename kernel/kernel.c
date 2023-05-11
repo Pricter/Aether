@@ -1,3 +1,10 @@
+/**
+ * kernel.c - Licensed under the MIT License
+ * 
+ * Start point of the kernel
+ * Initializes the kernel
+*/
+
 #include <stdint.h>
 #include <stddef.h>
 #include <limine.h>

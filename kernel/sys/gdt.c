@@ -1,3 +1,9 @@
+/**
+ * gdt.c - Licensed under the MIT License
+ * 
+ * Initialize the gdt
+*/
+
 #include <stdint.h>
 #include <stddef.h>
 

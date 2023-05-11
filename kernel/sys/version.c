@@ -1,3 +1,9 @@
+/**
+ * version.c - Licensed under the MIT License
+ * 
+ * This file contains the kernel build and git information to display
+*/
+
 #include <kernel/version.h>
 
 #define STR(x) #x

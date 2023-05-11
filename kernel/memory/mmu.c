@@ -1,3 +1,9 @@
+/**
+ * mmu.c - Licensed under the MIT License
+ * 
+ * Setup the memory map and page tables
+*/
+
 #include <kernel/mmu.h>
 #include <stdint.h>
 #include <stddef.h>

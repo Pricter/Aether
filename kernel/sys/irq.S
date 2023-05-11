@@ -1,3 +1,9 @@
+/**
+ * irq.S - Licensed under the MIT License
+ *
+ * Declared the isrs for the idt
+ */
+
 .section .text
 .align 4
 
