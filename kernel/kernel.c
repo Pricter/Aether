@@ -56,11 +56,10 @@ void _start(void) {
     /* Time and TSC and get the initial boot time from RTC. */
     clock_initialize();
 
-    gdt_init();
-
     /* Initialize memory */
     mmu_init();
 
+	gdt_init();
     idt_init();
 
 	printf("symbols: Start at %p\n", kernel_symbols_start);

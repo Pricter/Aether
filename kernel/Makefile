@@ -1,0 +1,51 @@
+all: KERNEL
+KERNEL: kernel.elf
+
+# TODO: Test using clang
+CC = gcc
+LD = ld
+NM = nm
+
+KERNEL_CFLAGS  = -g -pipe -nostdinc -Wall -Wextra -std=gnu11 -O2
+KERNEL_CFLAGS += -DPRINTF_ALIAS_STANDARD_FUNCTION_NAMES_HARD
+KERNEL_CFLAGS += -D_KERNEL_ -DKERNEL_ARCH=x86_64 -DKERNEL_GIT_TAG=$(shell ../util/git-tag.sh)
+KERNEL_CFLAGS += -ffreestanding -fno-stack-protector -fno-stack-check -fno-PIE
+KERNEL_CFLAGS += -fno-lto -fno-PIC -m64 -march=x86-64 -mabi=sysv -mno-mmx
+KERNEL_CFLAGS += -mno-sse -mno-sse2 -mno-red-zone -mcmodel=kernel
+KERNEL_CFLAGS += -I../base/usr/include -I../kernel
+
+KERNEL_LDFLAGS  = -nostdlib -static -m elf_x86_64 -no-pie
+KERNEL_LDFLAGS += -z max-page-size=0x1000 -T linker.ld
+
+KERNEL_CFILES := $(shell find -L . -type f -name '*.c')
+KERNEL_ASMFILES := $(shell find -L . -type f -name '*.S')
+
+KERNEL_OBJECTS := $(patsubst %.c,%.o,$(KERNEL_CFILES))
+KERNEL_ASMOBJECTS := $(patsubst %.S,%.o,$(KERNEL_ASMFILES))
+KERNEL_ASMOBJECTS := $(filter-out ./symbols.o, $(KERNEL_ASMOBJECTS))
+
+%.o: %.c
+	@$(CC) $(KERNEL_CFLAGS) -c $< -o $@ > /dev/null
+	@echo     CC -c $< -o $@
+
+%.o: %.S
+	@$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+	@echo     CC -c $< -o $@
+
+symbols.o: $(KERNEL_OBJECTS) $(KERNEL_ASMOBJECTS)
+	rm -f symbols.o
+	@echo Building temporary kernel for symbols.o
+	$(LD) $(KERNEL_LDFLAGS) -o kernel_temp.elf $(KERNEL_OBJECTS) $(KERNEL_ASMOBJECTS) > /dev/null
+	nm kernel_temp.elf -g | python ../util/gensym.py > symbols.S
+	$(CC) -c symbols.S -o symbols.o
+	-rm -f kernel_temp.elf
+
+kernel.elf: symbols.o
+	@echo Rebuilding kernel...
+	$(LD) $(KERNEL_LDFLAGS) -o kernel.elf $(KERNEL_OBJECTS) $(KERNEL_ASMOBJECTS) symbols.o
+	@echo Kernel fully built!
+
+.PHONY: clean
+clean:
+	-rm -f $(KERNEL_ASMOBJECTS) $(KERNEL_OBJECTS) symbols.o
+	-rm -f kernel.elf
