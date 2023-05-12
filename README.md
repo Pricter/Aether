@@ -46,3 +46,7 @@ Dont use the `partitions` (entries with a number at the end) for this
 ```sh
 $ dd if=jeff.iso of=/dev/sdx
 ```
+
+## Other notes:
+
+- The kernel crashes if there is not enough memory instead of using a page file
