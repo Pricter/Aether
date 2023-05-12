@@ -81,6 +81,10 @@ pagemap_t* mmu_kernel_pagemap = NULL;
 
 extern char kernel_start[], kernel_end[];
 
+extern char text_start[], text_end[];
+extern char rodata_start[], rodata_end[];
+extern char data_start[], data_end[];
+
 /**
  * mmu_frame_clear()
  * 
@@ -347,10 +351,32 @@ void mmu_init(void) {
 		mmu_map_page(mmu_kernel_pagemap, i + HHDM_HIGHER_HALF, i, PTE_PRESENT | PTE_WRITABLE);
 	}
 
-	/* Map the kernel */
-	for(uintptr_t i = 0; i < kernel_size; i += 0x1000) {
-		mmu_map_page(mmu_kernel_pagemap, kaddr->virtual_base + i, kaddr->physical_base + i, PTE_PRESENT);
-	}
+	/* Map the text section */
+	for(uintptr_t i = text_start; i < text_end; i += 0x1000) {
+        mmu_map_page(
+            mmu_kernel_pagemap,
+            i,
+            kaddr->physical_base + (i - kaddr->virtual_base),
+            PTE_PRESENT);
+    }
+
+	/* Map the rodata section */
+    for(uintptr_t i = rodata_start; i < rodata_end; i += 0x1000) {
+        mmu_map_page(
+            mmu_kernel_pagemap,
+            i,
+            kaddr->physical_base + (i - kaddr->virtual_base),
+            PTE_PRESENT | PTE_NX);
+    }
+
+	/* Map the data and bss sections (both have the same end in the linker file) */
+    for(uintptr_t i = data_start; i < data_end; i += 0x1000) {
+        mmu_map_page(
+            mmu_kernel_pagemap,
+            i,
+            kaddr->physical_base + (i - kaddr->virtual_base),
+            PTE_PRESENT | PTE_WRITABLE);
+    }
 
 	mmu_switch_pagemap(mmu_kernel_pagemap);
 

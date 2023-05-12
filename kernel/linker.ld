@@ -1,12 +1,8 @@
-/* Tell the linker that we want an x86_64 ELF64 output file */
 OUTPUT_FORMAT(elf64-x86-64)
 OUTPUT_ARCH(i386:x86-64)
 
-/* We want the symbol _start to be our entry point */
 ENTRY(_start)
 
-/* Define the program headers we want so the bootloader gives us the right */
-/* MMU permissions */
 PHDRS
 {
     text    PT_LOAD    FLAGS((1 << 0) | (1 << 2)) ; /* Execute + Read */
@@ -25,8 +21,7 @@ SECTIONS
     } :text
 	text_end = .;
 
-    /* Move to the next memory page for .rodata */
-    . += CONSTANT(MAXPAGESIZE);
+    . = ALIGN(0x1000);
 
 	rodata_start = .;
     .rodata : {
@@ -34,8 +29,7 @@ SECTIONS
     } :rodata
 	rodata_end = .;
 
-    /* Move to the next memory page for .data */
-    . += CONSTANT(MAXPAGESIZE);
+    . = ALIGN(0x1000);
 
 	data_start = .;
     .data : {
