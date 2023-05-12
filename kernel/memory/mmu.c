@@ -79,8 +79,6 @@ pagemap_t* mmu_kernel_pagemap = NULL;
 /* Macro to align linker symbols to page size */
 #define ALIGN_BACK(x, a) (((x) + ((a) - (1))) / (a)) * (a)
 
-extern char kernel_start[], kernel_end[];
-
 extern char text_start[], text_end[];
 extern char rodata_start[], rodata_end[];
 extern char data_start[], data_end[];
@@ -338,15 +336,11 @@ void mmu_init(void) {
 
 	struct limine_kernel_address_response *kaddr = kaddr_request.response;
 
-	/* Calculate the kernel size */
-	uint64_t kernel_size = kernel_end - kernel_start;
-
-	/* Identity map all memmap entries and also their hhdm */
 	for(uint64_t i = 0; i < response->entry_count; i++) {
 		uintptr_t base = entries[i]->base;
 		uintptr_t end = entries[i]->base + entries[i]->length;
 		for(uintptr_t i = base; i < end; i += 0x1000) {
-			mmu_map_page(mmu_kernel_pagemap, i, i, PTE_PRESENT);
+			mmu_map_page(mmu_kernel_pagemap, i, i, PTE_PRESENT | PTE_WRITABLE);
 			mmu_map_page(mmu_kernel_pagemap, i + HHDM_HIGHER_HALF, i, PTE_PRESENT | PTE_WRITABLE);
 		}
 	}
@@ -389,7 +383,17 @@ void mmu_init(void) {
     printf("mmu: bitmap starting address: %p\n", bitmap);
     printf("mmu: Used memory: %lu\n", usedMemory);
     printf("mmu: Free memory: %lu\n", freeMemory);
-	printf("mmu: Kernel extent: %p - %p\n", kernel_start, kernel_end);
-	printf("mmu: Kernel size: %lu\n", kernel_size);
+	printf("mmu: Text   %p - %p of %6lu\n",
+		(text_start - kaddr->virtual_base) + kaddr->physical_base,
+		(text_end   - kaddr->virtual_base) + kaddr->physical_base,
+		text_end    - text_start);
+	printf("mmu: Rodata %p - %p of %6lu\n",
+		(rodata_start - kaddr->virtual_base) + kaddr->physical_base,
+		(rodata_end   - kaddr->virtual_base) + kaddr->physical_base,
+		rodata_end    - rodata_start);
+	printf("mmu: Data   %p - %p of %6lu\n",
+		(data_start - kaddr->virtual_base) + kaddr->physical_base,
+		(data_end   - kaddr->virtual_base) + kaddr->physical_base,
+		data_end    - data_start);
 	printf("mmu: Initialized\n");
 }
