@@ -184,16 +184,27 @@ uintptr_t mmu_request_frame(void) {
  * @param allocate Create if not present
 */
 static uint64_t *get_next_level(uint64_t* top_level, size_t idx, bool allocate) {
+	/* Check if the entry is present */
 	if((top_level[idx] & PTE_PRESENT) != 0) {
+		/* Return the address + hhdm */
 		return (uint64_t*)(PTE_GET_ADDR(top_level[idx]) + HHDM_HIGHER_HALF);
 	}
 
+	/* We do not allocate and return NULL because the user does not want it to be allocated */
 	if(!allocate) return NULL;
 
+	/* Request frame */
 	void* next_level = mmu_request_frame();
+	
+	/**
+     * Because we return next_level + hhdm and any function is using that we need to 
+	 * memset next_level + hhdm instead of the address returned by mmu_request_frame
+	 */
 	memset(next_level + HHDM_HIGHER_HALF, 0, PAGE_SIZE);
 	
+	/* Set the flags to present, writable, user accessable */
 	top_level[idx] = (uint64_t)next_level | PTE_PRESENT | PTE_WRITABLE | PTE_USER;
+
 	return next_level + HHDM_HIGHER_HALF;
 }
 
@@ -224,15 +235,18 @@ void mmu_switch_pagemap(pagemap_t* pagemap) {
  * @param flags The flags to set in the map entry
 */
 void mmu_map_page(pagemap_t* pagemap, uintptr_t virt, uintptr_t phys, uint64_t flags) {
+	/* Get the indexes using the virtual address */
 	uint64_t pml_index = (virt >> 39) & 0x1FF;
 	uint64_t pdp_index = (virt >> 30) & 0x1FF;
 	uint64_t pd_index = (virt >> 21) & 0x1FF;
 	uint64_t pt_index = (virt >> 12) & 0x1FF;
 
+	/* Get the next level in the pagemap, create if it does not exist */
 	uint64_t* pdp = get_next_level(pagemap, pml_index, true);
 	uint64_t* pd = get_next_level(pdp, pdp_index, true);
 	uint64_t* pt = get_next_level(pd, pd_index, true);
 	
+	/* Set it to phys | flags */
 	pt[pt_index] = phys | flags;
 }
 
@@ -320,20 +334,22 @@ void mmu_init(void) {
 
 	struct limine_kernel_address_response *kaddr = kaddr_request.response;
 
-	printf("%p - %p\n", kernel_start, kernel_end);
+	/* Calculate the kernel size */
+	uint64_t kernel_size = kernel_end - kernel_start;
 
+	/* Map the total memory */
 	for(uintptr_t i = 0x1000; i < total_memory; i += 0x1000) {
 		mmu_map_page(mmu_kernel_pagemap, i, i, PTE_PRESENT | PTE_WRITABLE);
 	}
 
-	uint64_t kernel_size = kernel_end - kernel_start;
-
-	for(uintptr_t i = 0; i < kernel_size; i += 0x1000) {
-		mmu_map_page(mmu_kernel_pagemap, kaddr->virtual_base + i, kaddr->physical_base + i, PTE_PRESENT);
-	}
-
+	/* Map the total memory to its hhdm */
 	for(uintptr_t i = 0x1000; i < total_memory; i += 0x1000) {
 		mmu_map_page(mmu_kernel_pagemap, i + HHDM_HIGHER_HALF, i, PTE_PRESENT | PTE_WRITABLE);
+	}
+
+	/* Map the kernel */
+	for(uintptr_t i = 0; i < kernel_size; i += 0x1000) {
+		mmu_map_page(mmu_kernel_pagemap, kaddr->virtual_base + i, kaddr->physical_base + i, PTE_PRESENT);
 	}
 
 	mmu_switch_pagemap(mmu_kernel_pagemap);
@@ -347,5 +363,7 @@ void mmu_init(void) {
     printf("mmu: bitmap starting address: %p\n", bitmap);
     printf("mmu: Used memory: %lu\n", usedMemory);
     printf("mmu: Free memory: %lu\n", freeMemory);
+	printf("mmu: Kernel extent: %p - %p\n", kernel_start, kernel_end);
+	printf("mmu: Kernel size: %lu\n", kernel_size);
 	printf("mmu: Initialized\n");
 }

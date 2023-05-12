@@ -16,10 +16,6 @@ PHDRS
 
 SECTIONS
 {
-    /* We wanna be placed in the topmost 2GiB of the address space, for optimisations */
-    /* and because that is what the Limine spec mandates. */
-    /* Any address in this region will do, but often 0xffffffff80000000 is chosen as */
-    /* that is the beginning of the region. */
     . = 0xffffffff80000000;
 	kernel_start = .;
 
