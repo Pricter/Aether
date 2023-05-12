@@ -7,7 +7,7 @@ all-hdd: $(ISO_NAME).hdd
 
 .PHONY: run run-uefi run-hdd run-hdd-uefi
 run: $(ISO_NAME).iso
-	qemu-system-x86_64 -M q35 -m 2G -cdrom $(ISO_NAME).iso -boot d -D qlog.txt -d int -no-reboot
+	qemu-system-x86_64 -M q35 -m 2G -cdrom $(ISO_NAME).iso -boot d -D qlog.txt -d int -no-reboot -monitor stdio
 
 run-uefi: ovmf $(ISO_NAME).iso
 	qemu-system-x86_64 -M q35 -m 2G -bios ovmf/OVMF.fd -cdrom $(ISO_NAME).iso -boot d

@@ -64,13 +64,6 @@ void _start(void) {
 	/* Initialize memory */
     mmu_init();
 
-	// TODO: Framebuffer and terminal dont work, fix
-	struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
-	for (size_t i = 0; i < 100; i++) {
-        uint32_t *fb_ptr = framebuffer->address;
-        fb_ptr[i * (framebuffer->pitch / 4) + i] = 0xffffff;
-    }
-
 	// printf("symbols: Start at %p\n", kernel_symbols_start);
 	// printf("symbols: End at %p\n", kernel_symbols_end);
 

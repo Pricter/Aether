@@ -79,14 +79,7 @@ pagemap_t* mmu_kernel_pagemap = NULL;
 /* Macro to align linker symbols to page size */
 #define ALIGN_BACK(x, a) (((x) + ((a) - (1))) / (a)) * (a)
 
-/* The start and end of the text section */
-extern char text_start[], text_end[];
-
-/* The start and end of the read only data section */
-extern char rodata_start[], rodata_end[];
-
-/* The start and end of the data section */
-extern char data_start[], data_end[];
+extern char kernel_start[], kernel_end[];
 
 /**
  * mmu_frame_clear()
@@ -170,7 +163,7 @@ uintptr_t mmu_request_frame(void) {
     /* Loop through all frames */
     for(; lastFrame < nframes; lastFrame++) {
         /* Calculate the address (i * 4096) */
-        uintptr_t address = lastFrame * 4096;
+        uintptr_t address = lastFrame * PAGE_SIZE;
 
         /* If the frame is free then set it to used and return it */
         if(!mmu_test_frame(address)) {
@@ -198,6 +191,7 @@ static uint64_t *get_next_level(uint64_t* top_level, size_t idx, bool allocate) 
 	if(!allocate) return NULL;
 
 	void* next_level = mmu_request_frame();
+	memset(next_level + HHDM_HIGHER_HALF, 0, PAGE_SIZE);
 	
 	top_level[idx] = (uint64_t)next_level | PTE_PRESENT | PTE_WRITABLE | PTE_USER;
 	return next_level + HHDM_HIGHER_HALF;
@@ -324,98 +318,34 @@ void mmu_init(void) {
 	/* Assign a page in the hhdm */
 	mmu_kernel_pagemap = mmu_request_frame() + HHDM_HIGHER_HALF;
 
-	/* Create the upper 256 entries */
-	for(int i = 256; i < 512; i++) {
-		/* Assign a page in the hhdm */
-		uintptr_t page = mmu_request_frame();
-
-		/* Set the page address */
-		mmu_kernel_pagemap[i] = (uint64_t)page | PTE_PRESENT | PTE_WRITABLE | PTE_USER;
-	}
-
-	/* Align all the symbols to 4096 */
-	uintptr_t text_start_aligned = ALIGN_FORWARD((uintptr_t)text_start, PAGE_SIZE);
-	uintptr_t rodata_start_aligned = ALIGN_FORWARD((uintptr_t)rodata_start, PAGE_SIZE);
-	uintptr_t data_start_aligned = ALIGN_FORWARD((uintptr_t)data_start, PAGE_SIZE);
-
-	uintptr_t text_end_aligned = ALIGN_FORWARD((uintptr_t)text_end, PAGE_SIZE);
-	uintptr_t rodata_end_aligned = ALIGN_FORWARD((uintptr_t)rodata_end, PAGE_SIZE);
-	uintptr_t data_end_aligned = ALIGN_FORWARD((uintptr_t)data_end, PAGE_SIZE);
-	
-	/* Use response struct to make our life easier */
 	struct limine_kernel_address_response *kaddr = kaddr_request.response;
 
-	/* Map the text section */
-	for(uintptr_t text_addr = text_start_aligned; text_addr < text_end_aligned; text_addr += PAGE_SIZE) {
-		/* Calculate the physical address of the text section */
-		uintptr_t phys = text_addr - kaddr->virtual_base + kaddr->physical_base;
+	printf("%p - %p\n", kernel_start, kernel_end);
 
-		/* Set the kernel text section to read only */
-		mmu_map_page(mmu_kernel_pagemap, text_addr, phys, PTE_PRESENT);
+	for(uintptr_t i = 0x1000; i < total_memory; i += 0x1000) {
+		mmu_map_page(mmu_kernel_pagemap, i, i, PTE_PRESENT | PTE_WRITABLE);
 	}
 
-	/* Map the rodata section */
-	for(uintptr_t rodata_addr = rodata_start_aligned; rodata_addr < rodata_end_aligned; rodata_addr += PAGE_SIZE) {
-		/* Calculate the physical address of the rodata section */
-		uintptr_t phys = rodata_addr - kaddr->virtual_base + kaddr->physical_base;
+	uint64_t kernel_size = kernel_end - kernel_start;
 
-		/* Set the read only data section to non executable also */
-		mmu_map_page(mmu_kernel_pagemap, rodata_addr, phys, PTE_PRESENT | PTE_NX);
+	for(uintptr_t i = 0; i < kernel_size; i += 0x1000) {
+		mmu_map_page(mmu_kernel_pagemap, kaddr->virtual_base + i, kaddr->physical_base + i, PTE_PRESENT);
 	}
 
-	/* Map the data section */
-	for(uintptr_t data_addr = data_start_aligned; data_addr < data_end_aligned; data_addr += PAGE_SIZE) {
-		/* Calculate the physical address of the text section */
-		uintptr_t phys = data_addr - kaddr->virtual_base + kaddr->physical_base;
-
-		/* Set the kernel data section to read only */
-		mmu_map_page(mmu_kernel_pagemap, data_addr, phys, PTE_PRESENT);
-	}
-
-	/* Map some memory */
-	for(uintptr_t addr = 0x1000; addr < 0x100000000; addr += PAGE_SIZE) {
-		/* Identity map addr to addr setting it to writable */
-		mmu_map_page(mmu_kernel_pagemap, addr, addr, PTE_PRESENT | PTE_WRITABLE);
-
-		/* Also map addr to its hhdm part setting it to writable */
-		mmu_map_page(mmu_kernel_pagemap, addr + HHDM_HIGHER_HALF, addr, PTE_PRESENT | PTE_WRITABLE | PTE_NX);
-	}
-
-	/* Map all the memmap entries */
-	for(uint64_t i = 0; i < response->entry_count; i++) {
-		struct limine_memmap_entry* entry = entries[i];
-
-		/* Align the entries */
-		uintptr_t base = entry->base;
-		uintptr_t top = entry->base + entry->length;
-
-		/* Map the entry */
-		for(uintptr_t j = base; j < top; j += PAGE_SIZE) {
-
-			/* Identity map j to j */
-			mmu_map_page(mmu_kernel_pagemap, j, j, PTE_PRESENT | PTE_WRITABLE);
-
-			/* Map it to its hhdm part */
-			mmu_map_page(mmu_kernel_pagemap, j + HHDM_HIGHER_HALF, j, PTE_PRESENT | PTE_WRITABLE);
-		}
+	for(uintptr_t i = 0x1000; i < total_memory; i += 0x1000) {
+		mmu_map_page(mmu_kernel_pagemap, i + HHDM_HIGHER_HALF, i, PTE_PRESENT | PTE_WRITABLE);
 	}
 
 	mmu_switch_pagemap(mmu_kernel_pagemap);
 
     /* Print the information */
-    // printf("mmu: Highest free memory address: %p\n", highest_free_address);
-    // printf("mmu: Highest free memory address size: %lu\n", highest_free_address_size);
-    // printf("mmu: Total memory: %lu\n", total_memory);
-    // printf("mmu: bitmap entries: %lu\n", nframes);
-    // printf("mmu: bitmap size: %lu\n", bytesOfBitmap);
-    // printf("mmu: bitmap starting address: %p\n", bitmap);
-    // printf("mmu: Used memory: %lu\n", usedMemory);
-    // printf("mmu: Free memory: %lu\n", freeMemory);
-	// printf("mmu: Text section: %p - %p of %lu\n",
-	// 	text_start, text_end, text_end - text_start);
-	// printf("mmu: Rodata section: %p - %p of %lu\n",
-	// 	rodata_start, rodata_end, rodata_end - rodata_start);
-	// printf("mmu: Data section: %p - %p of %lu\n",
-	// 	data_start, data_end, data_end - data_start);
-	// printf("mmu: Initialized\n");
+    printf("mmu: Highest free memory address: %p\n", highest_free_address);
+    printf("mmu: Highest free memory address size: %lu\n", highest_free_address_size);
+    printf("mmu: Total memory: %lu\n", total_memory);
+    printf("mmu: bitmap entries: %lu\n", nframes);
+    printf("mmu: bitmap size: %lu\n", bytesOfBitmap);
+    printf("mmu: bitmap starting address: %p\n", bitmap);
+    printf("mmu: Used memory: %lu\n", usedMemory);
+    printf("mmu: Free memory: %lu\n", freeMemory);
+	printf("mmu: Initialized\n");
 }
