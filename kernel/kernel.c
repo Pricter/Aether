@@ -16,8 +16,6 @@
 #include <string.h>
 #include <kernel/symboltable.h>
 
-extern void clock_initialize(void);
-
 extern void gdt_init(void);
 extern void mmu_init(void);
 extern void idt_init(void);
@@ -36,11 +34,11 @@ void putchar_(char c) {
     terminal_request.response->write(terminal, s, 2);
 }
 
-void set_core_base(uintptr_t base) {
-    asm volatile ("wrmsr" : : "c" (0xc0000101), "d" ((uint32_t)(base >> 32)), "a" ((uint32_t)(base & 0xFFFFFFFF)));
-    asm volatile ("wrmsr" : : "c" (0xc0000102), "d" ((uint32_t)(base >> 32)), "a" ((uint32_t)(base & 0xFFFFFFFF)));
-    asm volatile ("swapgs");
-}
+
+static volatile struct limine_framebuffer_request framebuffer_request = {
+    .id = LIMINE_FRAMEBUFFER_REQUEST,
+    .revision = 0
+};
 
 /**
  * The kernel start function. The kernel begins executing from
@@ -60,24 +58,28 @@ void _start(void) {
         __kernel_build_date,
         __kernel_build_time);
 
-    /* Time and TSC and get the initial boot time from RTC. */
-    clock_initialize();
-
-    /* Initialize memory */
-    mmu_init();
-
 	gdt_init();
     idt_init();
 
-	printf("symbols: Start at %p\n", kernel_symbols_start);
-	printf("symbols: End at %p\n", kernel_symbols_end);
+	/* Initialize memory */
+    mmu_init();
 
-	printf("Kernel symbols:\n");
-	kernel_symbol_t* k = (kernel_symbol_t*)&kernel_symbols_start;
-	while((uintptr_t)k < (uintptr_t)&kernel_symbols_end) {
-		printf("\t(%p) %s\n", k->addr, k->name);
-		k = (kernel_symbol_t*)((uintptr_t)k + sizeof(*k) + strlen(k->name) + 1);
-	}
+	// TODO: Framebuffer and terminal dont work, fix
+	struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
+	for (size_t i = 0; i < 100; i++) {
+        uint32_t *fb_ptr = framebuffer->address;
+        fb_ptr[i * (framebuffer->pitch / 4) + i] = 0xffffff;
+    }
+
+	// printf("symbols: Start at %p\n", kernel_symbols_start);
+	// printf("symbols: End at %p\n", kernel_symbols_end);
+
+	// printf("Kernel symbols:\n");
+	// kernel_symbol_t* k = (kernel_symbol_t*)&kernel_symbols_start;
+	// while((uintptr_t)k < (uintptr_t)&kernel_symbols_end) {
+	// 	printf("\t(%p) %s\n", k->addr, k->name);
+	// 	k = (kernel_symbol_t*)((uintptr_t)k + sizeof(*k) + strlen(k->name) + 1);
+	// }
 
     // We are done. Hang up
     asm ("cli");

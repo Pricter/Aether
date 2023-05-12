@@ -1,19 +1,13 @@
 .section .symbols
 
-.extern arch_boot_time
-.type arch_boot_time, @function
-.extern arch_perf_timer
-.type arch_perf_timer, @function
 .extern bitmap
 .type bitmap, @function
 .extern bytesOfBitmap
 .type bytesOfBitmap, @function
-.extern clock_initialize
-.type clock_initialize, @function
-.extern cpu_mhz
-.type cpu_mhz, @function
-.extern end
-.type end, @function
+.extern data_end
+.type data_end, @function
+.extern data_start
+.type data_start, @function
 .extern fatal
 .type fatal, @function
 .extern fctprintf
@@ -26,18 +20,12 @@
 .type gdt_init, @function
 .extern gdt_reload
 .type gdt_reload, @function
+.extern hhdm_request
+.type hhdm_request, @function
 .extern idt_init
 .type idt_init, @function
 .extern idt_set_gate
 .type idt_set_gate, @function
-.extern inportb
-.type inportb, @function
-.extern inportl
-.type inportl, @function
-.extern inports
-.type inports, @function
-.extern inportsm
-.type inportsm, @function
 .extern _isr0
 .type _isr0, @function
 .extern _isr1
@@ -118,8 +106,12 @@
 .type __kernel_build_time, @function
 .extern __kernel_compiler_version
 .type __kernel_compiler_version, @function
+.extern kernel_end
+.type kernel_end, @function
 .extern __kernel_name
 .type __kernel_name, @function
+.extern kernel_start
+.type kernel_start, @function
 .extern __kernel_version_format
 .type __kernel_version_format, @function
 .extern __kernel_version_lower
@@ -148,42 +140,42 @@
 .type mmu_frame_set, @function
 .extern mmu_init
 .type mmu_init, @function
+.extern mmu_kernel_pagemap
+.type mmu_kernel_pagemap, @function
+.extern mmu_map_page
+.type mmu_map_page, @function
 .extern mmu_request_frame
 .type mmu_request_frame, @function
+.extern mmu_switch_pagemap
+.type mmu_switch_pagemap, @function
 .extern mmu_test_frame
 .type mmu_test_frame, @function
 .extern nframes
 .type nframes, @function
-.extern outportb
-.type outportb, @function
-.extern outportl
-.type outportl, @function
-.extern outports
-.type outports, @function
-.extern outportsm
-.type outportsm, @function
 .extern printf
 .type printf, @function
 .extern putchar_
 .type putchar_, @function
-.extern read_cmos
-.type read_cmos, @function
-.extern set_core_base
-.type set_core_base, @function
+.extern rodata_end
+.type rodata_end, @function
+.extern rodata_start
+.type rodata_start, @function
 .extern snprintf
 .type snprintf, @function
+.extern spinlock_acquire
+.type spinlock_acquire, @function
 .extern sprintf
 .type sprintf, @function
 .extern _start
 .type _start, @function
 .extern strlen
 .type strlen, @function
+.extern text_end
+.type text_end, @function
+.extern text_start
+.type text_start, @function
 .extern total_memory
 .type total_memory, @function
-.extern tsc_basis_time
-.type tsc_basis_time, @function
-.extern tsc_mhz
-.type tsc_mhz, @function
 .extern usedMemory
 .type usedMemory, @function
 .extern vfctprintf
@@ -197,20 +189,14 @@
 .global kernel_symbols_start
 kernel_symbols_start:
 
-.quad arch_boot_time
-.asciz "arch_boot_time"
-.quad arch_perf_timer
-.asciz "arch_perf_timer"
 .quad bitmap
 .asciz "bitmap"
 .quad bytesOfBitmap
 .asciz "bytesOfBitmap"
-.quad clock_initialize
-.asciz "clock_initialize"
-.quad cpu_mhz
-.asciz "cpu_mhz"
-.quad end
-.asciz "end"
+.quad data_end
+.asciz "data_end"
+.quad data_start
+.asciz "data_start"
 .quad fatal
 .asciz "fatal"
 .quad fctprintf
@@ -223,18 +209,12 @@ kernel_symbols_start:
 .asciz "gdt_init"
 .quad gdt_reload
 .asciz "gdt_reload"
+.quad hhdm_request
+.asciz "hhdm_request"
 .quad idt_init
 .asciz "idt_init"
 .quad idt_set_gate
 .asciz "idt_set_gate"
-.quad inportb
-.asciz "inportb"
-.quad inportl
-.asciz "inportl"
-.quad inports
-.asciz "inports"
-.quad inportsm
-.asciz "inportsm"
 .quad _isr0
 .asciz "_isr0"
 .quad _isr1
@@ -315,8 +295,12 @@ kernel_symbols_start:
 .asciz "__kernel_build_time"
 .quad __kernel_compiler_version
 .asciz "__kernel_compiler_version"
+.quad kernel_end
+.asciz "kernel_end"
 .quad __kernel_name
 .asciz "__kernel_name"
+.quad kernel_start
+.asciz "kernel_start"
 .quad __kernel_version_format
 .asciz "__kernel_version_format"
 .quad __kernel_version_lower
@@ -345,42 +329,42 @@ kernel_symbols_start:
 .asciz "mmu_frame_set"
 .quad mmu_init
 .asciz "mmu_init"
+.quad mmu_kernel_pagemap
+.asciz "mmu_kernel_pagemap"
+.quad mmu_map_page
+.asciz "mmu_map_page"
 .quad mmu_request_frame
 .asciz "mmu_request_frame"
+.quad mmu_switch_pagemap
+.asciz "mmu_switch_pagemap"
 .quad mmu_test_frame
 .asciz "mmu_test_frame"
 .quad nframes
 .asciz "nframes"
-.quad outportb
-.asciz "outportb"
-.quad outportl
-.asciz "outportl"
-.quad outports
-.asciz "outports"
-.quad outportsm
-.asciz "outportsm"
 .quad printf
 .asciz "printf"
 .quad putchar_
 .asciz "putchar_"
-.quad read_cmos
-.asciz "read_cmos"
-.quad set_core_base
-.asciz "set_core_base"
+.quad rodata_end
+.asciz "rodata_end"
+.quad rodata_start
+.asciz "rodata_start"
 .quad snprintf
 .asciz "snprintf"
+.quad spinlock_acquire
+.asciz "spinlock_acquire"
 .quad sprintf
 .asciz "sprintf"
 .quad _start
 .asciz "_start"
 .quad strlen
 .asciz "strlen"
+.quad text_end
+.asciz "text_end"
+.quad text_start
+.asciz "text_start"
 .quad total_memory
 .asciz "total_memory"
-.quad tsc_basis_time
-.asciz "tsc_basis_time"
-.quad tsc_mhz
-.asciz "tsc_mhz"
 .quad usedMemory
 .asciz "usedMemory"
 .quad vfctprintf

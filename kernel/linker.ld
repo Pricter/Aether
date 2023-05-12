@@ -21,21 +21,27 @@ SECTIONS
     /* Any address in this region will do, but often 0xffffffff80000000 is chosen as */
     /* that is the beginning of the region. */
     . = 0xffffffff80000000;
+	kernel_start = .;
 
+	text_start = .;
     .text : {
         *(.text .text.*)
     } :text
+	text_end = .;
 
     /* Move to the next memory page for .rodata */
     . += CONSTANT(MAXPAGESIZE);
 
+	rodata_start = .;
     .rodata : {
         *(.rodata .rodata.*)
     } :rodata
+	rodata_end = .;
 
     /* Move to the next memory page for .data */
     . += CONSTANT(MAXPAGESIZE);
 
+	data_start = .;
     .data : {
         *(.data .data.*)
         *(.symbols)
@@ -44,14 +50,11 @@ SECTIONS
         PROVIDE(bss_start = .);
     } :data
 
-    /* NOTE: .bss needs to be the last thing mapped to :data, otherwise lots of */
-    /* unnecessary zeros will be written to the binary. */
-    /* If you need, for example, .init_array and .fini_array, those should be placed */
-    /* above this. */
     .bss : {
         *(COMMON)
         *(.bss .bss.*)
     } :data
+	data_end = .;
 
     /* Discard .note.* and .eh_frame since they may cause issues on some hosts. */
     /DISCARD/ : {
@@ -59,5 +62,5 @@ SECTIONS
         *(.note .note.*)
     }
 
-    end = .;
+    kernel_end = .;
 }

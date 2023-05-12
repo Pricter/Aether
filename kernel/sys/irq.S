@@ -55,7 +55,7 @@ ISR_NOERR 25 /* Reserved */
 ISR_NOERR 26 /* Reserved */
 ISR_NOERR 27 /* Reserved */
 ISR_NOERR 28 /* Hypervisor injection exception */
-ISR_NOERR 29 /* VMM Communication exception */
+ISR_NOERR 29 /* mmu Communication exception */
 ISR_NOERR 30 /* Security exception */
 ISR_NOERR 31 /* Reserved */
 

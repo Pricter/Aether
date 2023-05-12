@@ -152,7 +152,7 @@ struct regs* isr_handler_inner(struct regs* r) {
 		EXC(20, "virtualization exception")
 		EXC(21, "control protection exception")
 		EXC(28, "hypervisor injection exception")
-		EXC(29, "VMM communication exception")
+		EXC(29, "mmu communication exception")
 		EXC(30, "security exception")
 
 		default: panic("Unexpected interrupt", r, 0);
