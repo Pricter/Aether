@@ -341,14 +341,14 @@ void mmu_init(void) {
 	/* Calculate the kernel size */
 	uint64_t kernel_size = kernel_end - kernel_start;
 
-	/* Map the total memory */
-	for(uintptr_t i = 0x1000; i < total_memory; i += 0x1000) {
-		mmu_map_page(mmu_kernel_pagemap, i, i, PTE_PRESENT | PTE_WRITABLE);
-	}
-
-	/* Map the total memory to its hhdm */
-	for(uintptr_t i = 0x1000; i < total_memory; i += 0x1000) {
-		mmu_map_page(mmu_kernel_pagemap, i + HHDM_HIGHER_HALF, i, PTE_PRESENT | PTE_WRITABLE);
+	/* Identity map all memmap entries and also their hhdm */
+	for(uint64_t i = 0; i < response->entry_count; i++) {
+		uintptr_t base = entries[i]->base;
+		uintptr_t end = entries[i]->base + entries[i]->length;
+		for(uintptr_t i = base; i < end; i += 0x1000) {
+			mmu_map_page(mmu_kernel_pagemap, i, i, PTE_PRESENT);
+			mmu_map_page(mmu_kernel_pagemap, i + HHDM_HIGHER_HALF, i, PTE_PRESENT | PTE_WRITABLE);
+		}
 	}
 
 	/* Map the text section */
