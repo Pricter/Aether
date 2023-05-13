@@ -64,16 +64,6 @@ void _start(void) {
 	/* Initialize memory */
     mmu_init();
 
-	// printf("symbols: Start at %p\n", kernel_symbols_start);
-	// printf("symbols: End at %p\n", kernel_symbols_end);
-
-	// printf("Kernel symbols:\n");
-	// kernel_symbol_t* k = (kernel_symbol_t*)&kernel_symbols_start;
-	// while((uintptr_t)k < (uintptr_t)&kernel_symbols_end) {
-	// 	printf("\t(%p) %s\n", k->addr, k->name);
-	// 	k = (kernel_symbol_t*)((uintptr_t)k + sizeof(*k) + strlen(k->name) + 1);
-	// }
-
     // We are done. Hang up
     asm ("cli");
     for(;;) asm ("hlt");

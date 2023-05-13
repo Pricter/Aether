@@ -32,17 +32,9 @@ KERNEL_ASMOBJECTS := $(filter-out ./symbols.o, $(KERNEL_ASMOBJECTS))
 	@$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 	@echo     CC -c $< -o $@
 
-symbols.o: $(KERNEL_OBJECTS) $(KERNEL_ASMOBJECTS)
-	rm -f symbols.o
-	@echo Building temporary kernel for symbols.o
-	$(LD) $(KERNEL_LDFLAGS) -o kernel_temp.elf $(KERNEL_OBJECTS) $(KERNEL_ASMOBJECTS) > /dev/null
-	nm kernel_temp.elf -g | python ../util/gensym.py > symbols.S
-	$(CC) -c symbols.S -o symbols.o
-	-rm -f kernel_temp.elf
-
-kernel.elf: symbols.o
-	@echo Rebuilding kernel...
-	$(LD) $(KERNEL_LDFLAGS) -o kernel.elf $(KERNEL_OBJECTS) $(KERNEL_ASMOBJECTS) symbols.o
+kernel.elf: $(KERNEL_OBJECTS) $(KERNEL_ASMOBJECTS)
+	@echo Building kernel...
+	$(LD) $(KERNEL_LDFLAGS) -o kernel.elf $(KERNEL_OBJECTS) $(KERNEL_ASMOBJECTS)
 	@echo Kernel fully built!
 
 .PHONY: clean

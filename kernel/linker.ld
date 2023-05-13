@@ -13,7 +13,6 @@ PHDRS
 SECTIONS
 {
     . = 0xffffffff80000000;
-	kernel_start = .;
 
 	text_start = .;
     .text : {
@@ -35,9 +34,6 @@ SECTIONS
     .data : {
         *(.data .data.*)
         *(.symbols)
-        PROVIDE(kernel_symbols_start = .);
-        PROVIDE(kernel_symbols_end = .);
-        PROVIDE(bss_start = .);
     } :data
 
     .bss : {
@@ -51,6 +47,4 @@ SECTIONS
         *(.eh_frame)
         *(.note .note.*)
     }
-
-    kernel_end = .;
 }
