@@ -1,10 +1,8 @@
 all: KERNEL
 KERNEL: kernel.elf
 
-# TODO: Test using clang
 CC = gcc
 LD = ld
-NM = nm
 
 KERNEL_CFLAGS  = -g -pipe -nostdinc -Wall -Wextra -std=gnu11 -O2
 KERNEL_CFLAGS += -DPRINTF_ALIAS_STANDARD_FUNCTION_NAMES_HARD

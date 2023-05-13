@@ -38,3 +38,6 @@ typedef struct  {
 	gdt_pointer_t pointer;
 	tss_entry_t tss;
 } __attribute__((packed)) __attribute__((aligned(0x10))) FullGDT;
+
+void gdt_init(void);
+void gdt_reload(void);

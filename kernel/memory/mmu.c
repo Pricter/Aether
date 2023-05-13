@@ -151,6 +151,7 @@ bool mmu_test_frame(uintptr_t address) {
         /* Weird stuff */
         return (bitmap[byteIndex] & (1 << bitIndex)) != 0;
     }
+	return false;
 }
 
 /**
@@ -173,7 +174,7 @@ uintptr_t mmu_request_frame(void) {
             return address;
         }
     }
-    return NULL; /* TODO: Use page file */
+    return 0; /* TODO: Use page file */
 }
 
 /**
@@ -372,6 +373,7 @@ void mmu_init(void) {
             PTE_PRESENT | PTE_WRITABLE);
     }
 
+	/* Switch to our pagemap */
 	mmu_switch_pagemap(mmu_kernel_pagemap);
 
     /* Print the information */
