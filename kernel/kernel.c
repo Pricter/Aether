@@ -20,6 +20,7 @@ extern void gdt_init(void);
 extern void mmu_init(void);
 extern void slab_init(void);
 extern void idt_init(void);
+extern void symbols_init(void);
 
 extern unsigned long tsc_mhz;
 
@@ -70,6 +71,11 @@ void _start(void) {
 
 	/* Initialize the slab allocator */
 	slab_init();
+
+	/* TODO: Initialize flanterm at this point */
+
+	/* Initialize kernel symbols */
+	symbols_init();
 
     // We are done. Hang up
     asm ("cli");

@@ -129,7 +129,7 @@ void *malloc(size_t size) {
 
 void *realloc(void *addr, size_t new_size) {
     if (addr == NULL) {
-        return slab_alloc(new_size);
+        return malloc(new_size);
     }
 
     if (((uintptr_t)addr & 0xfff) == 0) {
@@ -139,7 +139,7 @@ void *realloc(void *addr, size_t new_size) {
             return addr;
         }
 
-        void *new_addr = slab_alloc(new_size);
+        void *new_addr = malloc(new_size);
         if (new_addr == NULL) {
             return NULL;
         }
@@ -150,7 +150,7 @@ void *realloc(void *addr, size_t new_size) {
             memcpy(new_addr, addr, metadata->size);
         }
 
-        slab_free(addr);
+        free(addr);
         return new_addr;
     }
 
@@ -158,7 +158,7 @@ void *realloc(void *addr, size_t new_size) {
     struct slab *slab = slab_header->slab;
 
     if (new_size > slab->ent_size) {
-        void *new_addr = slab_alloc(new_size);
+        void *new_addr = malloc(new_size);
         if (new_addr == NULL) {
             return NULL;
         }
