@@ -39,4 +39,12 @@ extern pagemap_t *mmu_kernel_pagemap;
 void mmu_frame_clear(uintptr_t address);
 void mmu_frame_set(uintptr_t address);
 uintptr_t mmu_request_frame(void);
+uintptr_t mmu_request_frames(uint64_t num);
+void mmu_free_frames(void* addr, uint64_t pages);
 void mmu_map_page(pagemap_t* pagemap, uintptr_t virt, uintptr_t phys, uint64_t flags);
+
+/* Malloc */
+void slab_init(void);
+void *malloc(size_t size);
+void *realloc(void *addr, size_t new_size);
+void free(void *addr);

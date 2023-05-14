@@ -12,6 +12,9 @@
 #include <memory.h>
 #include <deps/printf.h>
 
+/* Hangs the system */
+extern void fatal();
+
 /* Request limine for a memmap */
 static volatile struct limine_memmap_request memmap_request = {
     .id = LIMINE_MEMMAP_REQUEST,
@@ -174,7 +177,62 @@ uintptr_t mmu_request_frame(void) {
             return address;
         }
     }
+	printf("mmu: Fatal: Out of memory!!\n");
+	fatal();
     return 0; /* TODO: Use page file */
+}
+
+/**
+ * mmu_request_frames()
+ * 
+ * Requests multiple frames from mmu_request_frame
+ * 
+ * @param num The number of frames to allocate
+ */
+uintptr_t mmu_request_frames(uint64_t num) {
+    if(num < 1) return 0; /* Return if 0 */
+
+    uint64_t start_frame = 0;
+    uint64_t free_frames = 0;
+    for(; lastFrame < nframes; lastFrame++) {
+        uintptr_t address = lastFrame * PAGE_SIZE;
+
+        if(!mmu_test_frame(address)) {
+            if(free_frames == 0) {
+                /* This is the start of a new free block */
+                start_frame = lastFrame;
+            }
+            free_frames++;
+
+            if(free_frames == num) {
+                /* Found a continuous block of free frames */
+                for(uint64_t i = start_frame; i < start_frame + num; i++) {
+                    mmu_frame_set(i * PAGE_SIZE);
+                }
+                return start_frame * PAGE_SIZE;
+            }
+        } else {
+            /* This frame is used, reset the counter */
+            free_frames = 0;
+        }
+    }
+	printf("mmu: Fatal: Out of memory!!\n");
+	fatal();
+    return 0; /* TODO: Use page file */
+}
+
+/**
+ * mmu_free_frames()
+ * 
+ * Frees frames
+ * 
+ * @param addr The address to free
+ * @param pages The number of pages to free
+*/
+void mmu_free_frames(void* addr, uint64_t pages) {
+	for(uint64_t i = 0; i < pages; i++) {
+		mmu_frame_clear(addr + (i * 4096));
+	}
 }
 
 /**
@@ -274,7 +332,7 @@ void mmu_init(void) {
         struct limine_memmap_entry* entry = entries[i];
 
         /* Print the entry info */
-        printf("%s at %p: %012lu\n",
+        printf("%s at %p: %12lu\n",
             memmap_strings[entry->type], entry->base, entry->length);
 
         /* Check if the entry is usable and larger and the previous entry */

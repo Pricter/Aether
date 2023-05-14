@@ -18,6 +18,7 @@
 
 extern void gdt_init(void);
 extern void mmu_init(void);
+extern void slab_init(void);
 extern void idt_init(void);
 
 extern unsigned long tsc_mhz;
@@ -58,11 +59,17 @@ void _start(void) {
         __kernel_build_date,
         __kernel_build_time);
 
+	/* Initialize gdt */
 	gdt_init();
+	
+	/* Setup isrs */
     idt_init();
 
 	/* Initialize memory */
     mmu_init();
+
+	/* Initialize the slab allocator */
+	slab_init();
 
     // We are done. Hang up
     asm ("cli");
