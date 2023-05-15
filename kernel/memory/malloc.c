@@ -4,6 +4,7 @@
 #include <limine.h>
 #include <kernel/mmu.h>
 #include <kernel/spinlock.h>
+#include <memory.h>
 
 #define SIZEOF_ARRAY(ARRAY) (sizeof(ARRAY) / sizeof(ARRAY[0]))
 #define DIV_ROUNDUP(VALUE, DIV) ({ \
