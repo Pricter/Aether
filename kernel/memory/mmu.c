@@ -10,7 +10,7 @@
 #include <stdbool.h>
 #include <limine.h>
 #include <memory.h>
-#include <deps/printf.h>
+#include <kernel/kprintf.h>
 
 /* Hangs the system */
 extern void fatal();
@@ -177,7 +177,7 @@ uintptr_t mmu_request_frame(void) {
             return address;
         }
     }
-	printf("mmu: Fatal: Out of memory!!\n");
+	kprintf("mmu: Fatal: Out of memory!!\n");
 	fatal();
     return 0; /* TODO: Use page file */
 }
@@ -216,7 +216,7 @@ uintptr_t mmu_request_frames(uint64_t num) {
             free_frames = 0;
         }
     }
-	printf("mmu: Fatal: Out of memory!!\n");
+	kprintf("mmu: Fatal: Out of memory!!\n");
 	fatal();
     return 0; /* TODO: Use page file */
 }
@@ -320,20 +320,15 @@ void mmu_init(void) {
     /* Check if the bootloader returns a memmap, if not catch fire */
     struct limine_memmap_response* response = memmap_request.response;
     if(response == NULL || response->entry_count == 0) {
-        printf("mmu: Cannot continue without memmap\n");
+		/* If no memmap then hang */
         asm ("cli");
         for(;;) asm ("hlt");
     }
 
     struct limine_memmap_entry** entries = response->entries;
     /* Find the largest free memory segment */
-    printf("<memmap_type> at <base>: <size>\n\n");
     for(uint64_t i = 0; i < response->entry_count; i++) {
         struct limine_memmap_entry* entry = entries[i];
-
-        /* Print the entry info */
-        printf("%s at %p: %12lu\n",
-            memmap_strings[entry->type], entry->base, entry->length);
 
         /* Check if the entry is usable and larger and the previous entry */
         if(entry->type == LIMINE_MEMMAP_USABLE &&
@@ -433,27 +428,4 @@ void mmu_init(void) {
 
 	/* Switch to our pagemap */
 	mmu_switch_pagemap(mmu_kernel_pagemap);
-
-    /* Print the information */
-    printf("mmu: Highest free memory address: %p\n", highest_free_address);
-    printf("mmu: Highest free memory address size: %lu\n", highest_free_address_size);
-    printf("mmu: Total memory: %lu\n", total_memory);
-    printf("mmu: bitmap entries: %lu\n", nframes);
-    printf("mmu: bitmap size: %lu\n", bytesOfBitmap);
-    printf("mmu: bitmap starting address: %p\n", bitmap);
-    printf("mmu: Used memory: %lu\n", usedMemory);
-    printf("mmu: Free memory: %lu\n", freeMemory);
-	printf("mmu: Text   %p - %p of %6lu\n",
-		(text_start - kaddr->virtual_base) + kaddr->physical_base,
-		(text_end   - kaddr->virtual_base) + kaddr->physical_base,
-		text_end    - text_start);
-	printf("mmu: Rodata %p - %p of %6lu\n",
-		(rodata_start - kaddr->virtual_base) + kaddr->physical_base,
-		(rodata_end   - kaddr->virtual_base) + kaddr->physical_base,
-		rodata_end    - rodata_start);
-	printf("mmu: Data   %p - %p of %6lu\n",
-		(data_start - kaddr->virtual_base) + kaddr->physical_base,
-		(data_end   - kaddr->virtual_base) + kaddr->physical_base,
-		data_end    - data_start);
-	printf("mmu: Initialized\n");
 }

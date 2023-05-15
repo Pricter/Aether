@@ -1,3 +1,3 @@
 #pragma once
 
-void printf_initialize();
+void printf_init(void);

@@ -9,7 +9,7 @@
 #include <stddef.h>
 #include <limine.h>
 
-#include <deps/printf.h>
+#include <kernel/kprintf.h>
 #include <kernel/version.h>
 #include <kernel/mmu.h>
 #include <kernel/irq.h>
@@ -21,25 +21,13 @@ extern void mmu_init(void);
 extern void slab_init(void);
 extern void idt_init(void);
 extern void symbols_init(void);
+extern void printf_init(void);
 
 extern unsigned long tsc_mhz;
 
 static volatile struct limine_terminal_request terminal_request = {
     .id = LIMINE_TERMINAL_REQUEST,
     .revision = 0,
-};
-
-/* THIS IS DEPRECATED, REMOVE AFTER USING FLANTERM */
-void putchar_(char c) {
-    struct limine_terminal *terminal = terminal_request.response->terminals[0];
-    char s[2] = {c, '\0'};
-    terminal_request.response->write(terminal, s, 2);
-}
-
-
-static volatile struct limine_framebuffer_request framebuffer_request = {
-    .id = LIMINE_FRAMEBUFFER_REQUEST,
-    .revision = 0
 };
 
 /**
@@ -49,17 +37,6 @@ static volatile struct limine_framebuffer_request framebuffer_request = {
  * It prints the kernel information and initializes the kernel
 */
 void _start(void) {
-    printf("%s %d.%d.%d-%s %s compiled by \"%s\" on \"%s %s\"\n",
-        __kernel_name,
-        __kernel_version_major,
-        __kernel_version_minor,
-        __kernel_version_lower,
-        __kernel_version_suffix,
-        __kernel_arch,
-        __kernel_compiler_version,
-        __kernel_build_date,
-        __kernel_build_time);
-
 	/* Initialize gdt */
 	gdt_init();
 	
@@ -72,7 +49,18 @@ void _start(void) {
 	/* Initialize the slab allocator */
 	slab_init();
 
-	/* TODO: Initialize flanterm at this point */
+	printf_init();
+
+	kprintf("%s %d.%d.%d-%s %s compiled by \"%s\" on \"%s %s\"\n",
+        __kernel_name,
+        __kernel_version_major,
+        __kernel_version_minor,
+        __kernel_version_lower,
+        __kernel_version_suffix,
+        __kernel_arch,
+        __kernel_compiler_version,
+        __kernel_build_date,
+        __kernel_build_time);
 
 	/* Initialize kernel symbols */
 	symbols_init();
