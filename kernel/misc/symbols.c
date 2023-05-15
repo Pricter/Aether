@@ -3,6 +3,7 @@
 #include <kernel/mmu.h>
 #include <limine.h>
 #include <kernel/kprintf.h>
+#include <elf.h>
 
 static volatile struct limine_kernel_file_request kfile_request = {
 	.id = LIMINE_KERNEL_FILE_REQUEST,
@@ -16,4 +17,5 @@ void symbols_init(void) {
 	kfile_address = kernel_file->address;
 
 	kprintf("symbols: kernel file at %p\n", kfile_address);
+	Elf64_Ehdr* hdr = kfile_address;
 }
