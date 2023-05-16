@@ -14,7 +14,7 @@
 #include <kernel/mmu.h>
 #include <kernel/irq.h>
 #include <string.h>
-#include <kernel/symboltable.h>
+#include <kernel/symbols.h>
 
 extern void gdt_init(void);
 extern void mmu_init(void);
