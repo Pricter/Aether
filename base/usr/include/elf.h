@@ -41,159 +41,75 @@ typedef uint64_t Elf64_Versym;
 
 #define EI_NIDENT 16
 
+/**
+ * ELF Headers:
+ * 
+ * - e_ident: The initial bytes mark the file as an object file and provide machine
+ *   		  independent data with which to decode and interpret the file's contents
+ * - e_type: This member identifies the object file type
+ * - e_machine: This member's value specifies the required architecture for a file
+ * - e_version: Identifies the object file version
+ * - e_entry: Gives the virtual address to which the system first transfers
+ * 			  control, thus starting the process. If the file has no associated
+ * 			  entry point, this member holds zero.
+ * - e_phoff: Holds the program header table's file offset in bytes, i fthe program
+ * 			   has no header table, this member holds zero.
+ * - e_shoff: Holds the section header table's offset in bytes. If the file
+ * 			  has no section header, then this member holds zero.
+ * - e_flags: Holds processor-specific flags associated with the file.
+ * 			  Flag names take the form EF_machine_flag
+ * - e_ehsize: Holds the ELF header's size in bytes
+ * - e_phentsize: Holds the size in bytes of one entry in the file's program header table
+ * - e_phnum: This member holds the number of entries in the program header table. Thus
+ * 			  the product of e_phentsize and e_phnum gives the table's size in bytes. If
+ * 			  a file has no program header table, e_phnum holds the value zero.
+ * - e_shentsize: Holds a section header's size in bytes
+ * - e_shnum: This member holds the number of entries in the section header table. Thus
+ * 			  the product of e_shentsize and e_shnum gives the section header table's size
+ * 			  in bytes. If a file has no section header, e_shnum holds the value zero.
+ * 			  
+ * 			  If the number of sections is greater than or equal to SHN_LORESERVE(0xff00),
+ * 			  ths member has the value zero and the actual number of section header tables is
+ * 			  contained in the sh_size field of the section header at index 0. (Otherwise,
+ * 			  the sh_size member of the initial entry contains 0)
+ * - e_shstrndx: This member holds the section header table index of the entry
+ *			  associated with the section name string table. If the file has
+ *			  no section name string table, this member holds the value SHN_UNDEF
+*/
+
+/* 32bit elf header */
 typedef struct {
-	/**
-	 * The initial bytes mark the file as an object file and provide machine
-	 * independent data with which to decode and interpret the file's contents
-	*/
 	unsigned char e_ident[EI_NIDENT];
-
-	/* This member identifies the object file type */
 	Elf32_Half e_type;
-	
-	/* This member's value specifies the required architecture for a file */
 	Elf32_Half e_machine;
-
-	/* Identifies the object file version */
 	Elf32_Word e_version;
-
-	/**
-	 * Gives the virtual address to which the system first transfers
-	 * control, thus starting the process. If the file has no associated
-	 * entry point, this member holds zero.
-	*/
 	Elf32_Addr e_entry;
-
-	/**
-	 * Holds the program header table's file offset in bytes, i fthe program
-	 * has no header table, this member holds zero.
-	 */
 	Elf32_Off  e_phoff;
-
-	/**
-	 * Holds the section header table's offset in bytes. If the file
-	 * has no section header, then this member holds zero.
-	 */
 	Elf32_Off  e_shoff;
-	
-	/** 
-	 * Holds processor-specific flags associated with the file.
-	 * Flag names take the form EF_machine_flag
-	*/
 	Elf32_Word e_flags;
-
-	/* Holds the ELF header's size in bytes */
 	Elf32_Half e_ehsize;
-
-	/* Holds the size in bytes of one entry in the file's program header table */
 	Elf32_Half e_phentsize;
-
-	/**
-	 * This member holds the number of entries in the program header table. Thus
-	 * the product of e_phentsize and e_phnum gives the table's size in bytes. If
-	 * a file has no program header table, e_phnum holds the value zero.
-	*/
 	Elf32_Half e_phnum;
-
-	/* Holds a section header's size in bytes */
 	Elf32_Half e_shentsize;
-
-	/**
-	 * This member holds the number of entries in the section header table. Thus
-	 * the product of e_shentsize and e_shnum gives the section header table's size
-	 * in bytes. If a file has no section header, e_shnum holds the value zero.
-	 * 
-	 * If the number of sections is greater than or equal to SHN_LORESERVE(0xff00),
-	 * ths member has the value zero and the actual number of section header tables is
-	 * contained in the sh_size field of the section header at index 0. (Otherwise,
-	 * the sh_size member of the initial entry contains 0)
-	*/
 	Elf32_Half e_shnum;
-
-	/**
-	 * This member holds the section header table index of the entry
-	 * associated with the section name string table. If the file has
-	 * no section name string table, this member holds the value
-	 * SHN_UNDEF
-	*/
 	Elf32_Half e_shstrndx;
 } Elf32_Ehdr;
 
+/* 64-bit elf header */
 typedef struct {
-	/**
-	 * The initial bytes mark the file as an object file and provide machine
-	 * independent data with which to decode and interpret the file's contents
-	*/
 	unsigned char e_ident[EI_NIDENT];
-
-	/* This member identifies the object file type */
 	Elf64_Half e_type;
-
-	/* This member's value specifies the required architecture for a file */
 	Elf64_Half e_machine;
-
-	/* Identifies the object file version */
 	Elf64_Word e_version;
-
-	/**
-	 * Gives the virtual address to which the system first transfers
-	 * control, thus starting the process. If the file has no associated
-	 * entry point, this member holds zero.
-	*/
 	Elf64_Addr e_entry;
-
-	/**
-	 * Holds the program header table's file offset in bytes, if the program
-	 * has no header table, this member holds zero.
-	*/
 	Elf64_Off  e_phoff;
-
-	/**
-	 * Holds the section header table's offset in bytes. If the file
-	 * has no section header, then this member holds zero.
-	*/
 	Elf64_Off  e_shoff;
-
-	/** 
-	 * Holds processor-specific flags associated with the file.
-	 * Flag names take the form EF_machine_flag
-	*/
 	Elf64_Word e_flags;
-
-	/* Holds the ELF header's size in bytes */
 	Elf64_Half e_ehsize;
-
-	/* Holds the size in bytes of one entry in the file's program header table */
 	Elf64_Half e_phentsize;
-
-	/**
-	 * This member holds the number of entries in the program header table. Thus
-	 * the product of e_phentsize and e_phnum gives the table's size in bytes. If
-	 * a file has no program header table, e_phnum holds the value zero.
-	*/
 	Elf64_Half e_phnum;
-
-	/* Holds a section header's size in bytes */
 	Elf64_Half e_shentsize;
-
-	/**
-	 * This member holds the number of entries in the section header table. Thus
-	 * the product of e_shentsize and e_shnum gives the section header table's size
-	 * in bytes. If a file has no section header, e_shnum holds the value zero.
-	 * 
-	 * If the number of sections is greater than or equal to SHN_LORESERVE(0xff00),
-	 * ths member has the value zero and the actual number of section header tables is
-	 * contained in the sh_size field of the section header at index 0. (Otherwise,
-	 * the sh_size member of the initial entry contains 0)
-	*/
 	Elf64_Half e_shnum;
-
-	/**
-	 * This member holds the section header table index of the entry
-	 * associated with the section name string table. If the file has
-	 * no section name string table, this member holds the value
-	 * SHN_UNDEF
-	*/
 	Elf64_Half e_shstrndx;
 } Elf64_Ehdr;
 
@@ -322,8 +238,245 @@ typedef struct {
 #define ELFCLASS64 2 /* 64-bit objects */
 
 #define ELFDATANONE 0 /* Invalid data encoding */
-#define ELFDATA2LSB 1
-#define ELFDATA2MSB 2
+#define ELFDATA2LSB 1 /* 2's compliment, little endian */
+#define ELFDATA2MSB 2 /* 2's compliment, big endian */
+
+#define ELFOSABI_NONE 0 /* Unix System V ABI */
+#define ELFOSABI_SYSV 0 /* Alias */
+#define ELFOSABI_HPUX 1 /* HP-UX */
+#define ELFOSABI_NETBSD 2 /* NetBSD */
+#define ELFOSABI_LINUX 3 /* Linux */
+#define ELFOSABI_SOLARIS 6 /* Sun solaris */
+#define ELFOSABI_AIX 7 /* IBM AIX */
+#define ELFOSABI_IRIX 8 /* SGI Irix */
+#define ELFOSABI_FREEBSD 9 /* FreeBSD */
+#define ELFOSABI_TRU64 10 /* Compaq TRU64 UNIX */
+#define ELFOSABI_MODESTO 11 /* Novell Modesto */
+#define ELFOSABI_OPENBSD 12 /* OpenBSD */
+#define ELFOSABI_ARM 97 /* ARM */
+#define ELFOSABI_STANDALONE 255 /* Standalone (embedded) application */
+
+/* Special section indexes */
+#define SHN_UNDEF 0 /* Marks unidentified, missing, irrelevant, or otherwise meaningless section reference */
+#define SHN_LORESERVE 0xff00 /* Specifies the lower bound of the range of reserved indexes */
+#define SHN_LOPROC 0xff00 /* Reserved for processor specific semantics */
+#define SHN_HIPROC 0xff1f /* Reserved for processor specific semantics */
+#define SHN_LOOS 0xff20 /* Reserved for operating system specific sematicss */
+#define SHN_HIOS 0xff3f /* Reserved for operating system specific semantics */
+/**
+ * Specifies the absolute values for corresponding reference,
+ * symbols defined relative to SHN_ABS have absolute values
+ * and are not affected by relocation
+*/
+#define SHN_ABS 0xfff1
+#define SHN_COMMON 0xfff2 /* Symbols defined relative to this section are common symbols */
+/** 
+ * Escape value, indicates that the actual section header is too
+ * large to fit in the containing field and is to be found
+ * in another location (specific to the structure where it appears)
+*/
+#define SHN_XINDEX 0xffff
+/**
+ * Specifies the upper bound of the range of reserved indexes. The system reserved
+ * indexes between SHN_LORESERVE and SHN_HIRESERVE inclusive; the values do not
+ * reference the section header table. The section header table does not contain entries
+ * for the reserved indexes
+*/
+#define SHN_HIRESERVE 0xffff
+
+/**
+ * Section headers
+ * 
+ * - sh_name: Name of the section. Its value is an index into the section header
+ * 			  string table section giving the location of a null-terminated string
+ * - sh_type: Categorizes the section's contents and semantics
+ * - sh_flags: Sections support 1-bit flags that describe miscellaneous attributes
+ * - sh_addr: If the section will appear in the memory image of a process, this
+ * 			  member gives the address at which the section's fist byte should
+ * 			  reside. Otherwise, the member contains 0.
+ * - sh_offset: This member's value gives the byte offset from the beginning of
+ * 			  the file to the first byte in the section. One section type
+ * 			  SHT_NOBITS ocupies no space in the file, and its sh_offset member
+ * 			  locates the conceptual placement in the file.
+ * - sh_size: This member gives the section's size in bytes. Unless the sectoin type
+ * 			  is SHT_NOBITS, the section occupies sh_size bytes in the file. A section
+ * 			  of type SHT_NOBITS may have a non-zero size, but it occupies no space
+ * - sh_link: This member holds a section header table index link, whose interpretation
+ * 			  depends on the section type
+ * - sh_info: This member holds extra information, whose interpretation depends on the
+ * 			  section type. If the sh_flags field for this section include the attribute
+ * 			  SHF_INFO_LINK, then this member represents a section header table index.
+ * - sh_addralign: Some sections have address alignment constraints. The value of
+ * 			  sh_addr must be congruent to 0, modulo the value of sh_addralign.
+ * 			  Currently, only 0 and positive integral powers of two are allowed.
+ * 			  Values 0 and 1 mean the section has no alignment constraints
+ * - sh_entsize: Some sections hold a table of fixed-size entries, such as a
+ * 			  symbol table. For such a section, this member gives the size in bytes
+ * 			  of each entry. The members contains 0 if the section does not hold a
+ * 			  table of fixed-size entries.	
+*/
+
+/* 32-bit section header */
+typedef struct {
+	Elf32_Word sh_name;
+	Elf32_Word sh_type;
+	Elf32_Word sh_flags;
+	Elf32_Addr sh_addr;
+	Elf32_Off  sh_offset;
+	Elf32_Word sh_size;
+	Elf32_Word sh_link;
+	Elf32_Word sh_info;
+	Elf32_Word sh_addralign;
+	Elf32_Word sh_entsize;
+} Elf32_Shdr;
+
+/* 64-bit section header */
+typedef struct {
+	Elf64_Word sh_name;
+	Elf64_Word sh_type;
+	Elf64_Xword sh_flags;
+	Elf64_Addr sh_addr;
+	Elf64_Off  sh_offset;
+	Elf64_Xword sh_size;
+	Elf64_Word sh_link;
+	Elf64_Word sh_info;
+	Elf64_Word sh_addralign;
+	Elf64_Word sh_entsize;
+} Elf64_Shdr;
+
+/**
+ * ELF Symbol
+ * 
+ * - st_name: Index into the object file's symbol string table, which
+ * 			  holds the charactrer representations of symbol names. If
+ * 			  the value is non-zero, it represents a string table index
+ * 			  that gives the symbol name. Otherwise the symbol table
+ * 			  entry has no name.
+ * - st_value: Gives the value of associated symbol. Depending on the
+ *			  context, this may be an absolute value, an address, and
+ * 			  so on
+ * - st_info: This member specifies the symbol's type and binding
+ * 			  attributes.
+ * - st_other: Specifies a symbol's visibility. Other bits contain 0 and
+ * 			  have no defined meaning.
+ * - st_shndx: Every symbol table entry is defined in relation to some
+ * 			  section. This member holds the relevant section header
+ * 			  table index. Some section indexes indicate special meaning
+*/
+
+/* 32-bit ELF symbol */
+typedef struct {
+	Elf32_Word st_name;
+	Elf32_Addr st_value;
+	Elf32_Word st_size;
+	unsigned char st_info;
+	unsigned char st_other;
+	Elf32_Half st_shndx;
+} Elf32_Sym;
+
+/* 64-bit ELF symbol */
+typedef struct {
+	Elf64_Word st_name;
+	unsigned char st_info;
+	unsigned char st_other;
+	Elf64_Half st_shndx;
+	Elf64_Addr st_value;
+	Elf64_Xword st_size;
+} Elf64_Sym;
+
+/* Macros for extracting info from st_info */
+#define ELF32_ST_BIND(i) ((i) >> 4)
+#define ELF32_ST_TYPE(i) ((i) & 0xf)
+#define ELF32_ST_INFO(b, t) (((b) << 4) + ((t) & 0xf))
+
+#define ELF64_ST_BIND(i) ((i) >> 4)
+#define ELF64_ST_TYPE(i) ((i) & 0xf)
+#define ELF64_ST_INFO(b, t) (((b) << 4) + ((t) & 0xf))
+
+/* Macros for getting the visibility from st_other */
+#define ELF32_ST_VISIBILITY(o) ((o) & 0x3)
+#define ELF64_ST_VISIBILITY(o) ((o) & 0x3)
+
+/* Legal values for st_other visibility */
+
+/**
+ * Local symbols are not visible outside the object file containing their
+ * definition. Local symbols of the name may exist in multiple files
+ * without interfering with each other.
+*/
+#define STB_LOCAL 0
+
+/**
+ * Global symbols are visible to all object files being combines.
+ * One file's definition of a global symbol will satisfy another
+ * file's undefined reference to the same global symbol.
+*/
+#define STB_GLOBAL 1
+
+/**
+ * Weak symbols resemble global symbols, but their definitions have
+ * lower precedence.
+*/
+#define STB_WEAK 2
+
+/* Reserved for operating system specific semantics */
+#define STB_LOOS 10
+#define STB_HIOS 12
+
+/* Reserved for processor specific semantics */
+#define STB_LOPROC 13
+#define STB_HIPROC 15
+
+/* Legal values for symbol types */
+
+/* The symbol's type is not specified */
+#define STT_NOTYPE 0
+
+/* The symbol is associated with a data object, such as a variable */
+#define STT_OBJECT 1
+
+/* The symbol is associated with a function or other executable code */
+#define STT_FUNC 2
+
+/* The symbol is associated with a section */
+#define STT_SECTION 3
+
+/**
+ * Conventionally the symbol's name gives the name of the source file
+ * associated with the object file. A file symbol has STB_LOCAL
+ * binding, its section index is SHN_ABS, and it precedes the other
+ * STB_LOCAL symbols for the file, if it is present
+*/
+#define STT_FILE 4
+
+/* The symbol labels an uninitalized common block */
+#define STT_COMMON 5
+
+/**
+ * The symbol specifies a Thread-Local Storage entity. When defined,
+ * it gives the assigned offset for the symbol, not the actual
+ * address. Symbols of tyupe STT_TLS can be referenced by only
+ * special thread-local storage relocations and thread-local
+ * storage relocations can only reference symbols with type STT_TLS.
+ * Implementation need not support thread-local storage
+*/
+#define STT_TLS 6
+
+/* Reserved for operating system specific semantics */
+#define STT_LOOS 10
+#define STT_HIOS 12
+
+/* Reserved for processor specific semantics */
+#define STT_LOPROC 13
+#define STT_HIPROC 15
+
+/* Legal values for symbol visibility */
+
+// TODO: Document
+#define STV_DEFAULT 0
+#define STV_INTERNAL 1
+#define STV_HIDDEN 2
+#define STV_PROTECTED 3
 
 /* WIP */
 

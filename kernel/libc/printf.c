@@ -12,8 +12,8 @@
 extern void fatal();
 
 /* Needed by eyalroz printf */
-void putchar_(char _) {
-	(void)_;
+void putchar_(char c) {
+	kprintf("%c", c);
 }
 
 /* Request limine for a framebuffer to print to */
