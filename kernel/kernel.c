@@ -15,6 +15,7 @@
 #include <kernel/irq.h>
 #include <string.h>
 #include <kernel/symbols.h>
+#include <kernel/acpi.h>
 
 extern void gdt_init(void);
 extern void mmu_init(void);
@@ -22,6 +23,7 @@ extern void slab_init(void);
 extern void idt_init(void);
 extern void symbols_init(void);
 extern void printf_init(void);
+extern void acpi_init(void);
 
 extern unsigned long tsc_mhz;
 
@@ -49,8 +51,10 @@ void _start(void) {
 	/* Initialize the slab allocator */
 	slab_init();
 
+	/* Initialize printf */
 	printf_init();
 
+	/* Print kernel info */
 	kprintf("%s %d.%d.%d-%s %s compiled by \"%s\" on \"%s %s\"\n",
         __kernel_name,
         __kernel_version_major,
@@ -64,6 +68,8 @@ void _start(void) {
 
 	/* Initialize kernel symbols */
 	symbols_init();
+
+	acpi_init();
 
     // We are done. Hang up
     asm ("cli");
