@@ -69,18 +69,17 @@ void symbols_init(void) {
 	function_table = malloc(sizeof(ksym_func_t) * (symbol_count - 1));
 
 	/* Add all the functions to the array, start from 1 (ignore the first null entry) */
-	for(uint64_t i = 1; i < symbol_count; i++) {
+	for(uint64_t i = 1; i < symbol_count - 1; i++) {
 		/* Only add entry if symbol is a function */
 		if(ELF64_ST_TYPE(symbol_table[i].st_info) == STT_FUNC) {
-			function_table[function_count++] = (ksym_func_t){
+			function_table[function_count] = (ksym_func_t){
 				.name = (uintptr_t)GET_NAME(symbol_string_table, symbol_table[i].st_name),
 				.addr = symbol_table[i].st_value
 			};
+			function_table[function_count - 1].next = &function_table[function_count];
+			function_count++;
 		}
 	}
-
-	/* Delete last null entry */
-	function_count--;
 
 	/* Print function count */
 	kprintf("symbols: Found %lu functions\n", function_count);
@@ -89,13 +88,29 @@ void symbols_init(void) {
 /**
  * symbols_search
  * 
- * Search a symbol based on its address
+ * Search a symbol closest lower than address
+ * 
+ * @param address The address to match
 */
 char* symbols_search(uintptr_t address) {
-	for(uint64_t i = 1; i < symbol_count; i++) {
-		if(function_table[i].addr == address) {
-			return function_table[i].name;
+    ksym_func_t* closest_symbol = symbol_table;
+
+	for(uint64_t i = 0; i < function_count; i++) {
+		if(function_table[i].addr <= address && function_table[i].addr > closest_symbol->addr) {
+			closest_symbol = &function_table[i];
 		}
 	}
-	return NULL;
+
+    return closest_symbol->name;
+}
+
+void stacktrace(void) {
+	stack_frame_t* stack;
+	asm volatile ("movq %%rbp, %0" : "=r"(stack));
+	kprintf("Stack trace:\n");
+	while(stack->rip != 0) {
+		char* name = symbols_search(stack->rip);
+		kprintf("\t<%p> [%s]\n", stack->rip, (name == NULL) ? "[unknown]" : name);
+		stack = stack->rbp;
+	}
 }

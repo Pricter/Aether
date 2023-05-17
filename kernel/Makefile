@@ -10,7 +10,7 @@ KERNEL_CFLAGS += -D_KERNEL_ -DKERNEL_ARCH=x86_64 -DKERNEL_GIT_TAG=$(shell ../uti
 KERNEL_CFLAGS += -ffreestanding -fno-stack-protector -fno-stack-check -fno-PIE
 KERNEL_CFLAGS += -fno-lto -fno-PIC -m64 -march=x86-64 -mabi=sysv -mno-mmx
 KERNEL_CFLAGS += -mno-sse -mno-sse2 -mno-red-zone -mcmodel=kernel
-KERNEL_CFLAGS += -I../base/usr/include -I../kernel
+KERNEL_CFLAGS += -I../base/usr/include -I../kernel -fno-omit-frame-pointer
 
 KERNEL_LDFLAGS  = -nostdlib -static -m elf_x86_64 -no-pie
 KERNEL_LDFLAGS += -z max-page-size=0x1000 -T linker.ld
