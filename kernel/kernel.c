@@ -22,6 +22,7 @@ extern void slab_init(void);
 extern void idt_init(void);
 extern void symbols_init(void);
 extern void printf_init(void);
+extern void smp_init(void);
 
 extern unsigned long tsc_mhz;
 
@@ -66,6 +67,9 @@ void _start(void) {
 
 	/* Initialize kernel symbols */
 	symbols_init();
+
+	/* Initialize multicore */
+	smp_init();
 
     // We are done. Hang up
     asm ("cli");

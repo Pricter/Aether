@@ -70,7 +70,9 @@ void idt_init(void) {
 	idt_set_gate(31, _isr31, 0x28, 0x8E, 0);
 
 	idt_set_gate(128, _isr128, 0x08, 0x8E, 1); /* Legacy system call entry point, called by userspace. */
+}
 
+void idt_reload(void) {
 	asm volatile (
 		"lidt %0"
 		: : "m"(idtp)
@@ -78,9 +80,9 @@ void idt_init(void) {
 }
 
 void fatal(void) {
+	asm ("cli");
 	for(;;) {
 		asm volatile (
-			"cli\n"
 			"hlt\n"
 		);
 	}

@@ -5,7 +5,7 @@ all: $(ISO_NAME).iso
 
 .PHONY: run run-uefi run-hdd run-hdd-uefi
 run: $(ISO_NAME).iso
-	qemu-system-x86_64 -M q35 -m 2G -cdrom $(ISO_NAME).iso -boot d -D qlog.txt -d int -no-reboot -monitor stdio
+	qemu-system-x86_64 -M q35 -m 2G -cdrom $(ISO_NAME).iso -boot d -D qlog.txt -d int -no-reboot -monitor stdio -smp 4
 
 limine:
 	git clone https://github.com/limine-bootloader/limine.git --branch=v4.x-branch-binary --depth=1

@@ -426,6 +426,10 @@ void mmu_init(void) {
             PTE_PRESENT | PTE_WRITABLE);
     }
 
-	/* Switch to our pagemap */
+	/**
+	 * Switch to our pagemap, I do it manually instead of using smp
+	 * as core 0 does not jump to core_start and thus the cr3 register
+	 * does not get loaded.
+	*/
 	mmu_switch_pagemap(mmu_kernel_pagemap);
 }

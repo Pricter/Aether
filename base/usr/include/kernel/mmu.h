@@ -42,6 +42,7 @@ uintptr_t mmu_request_frame(void);
 uintptr_t mmu_request_frames(uint64_t num);
 void mmu_free_frames(void* addr, uint64_t pages);
 void mmu_map_page(pagemap_t* pagemap, uintptr_t virt, uintptr_t phys, uint64_t flags);
+void mmu_switch_pagemap(pagemap_t* pagemap);
 
 /* Malloc */
 void slab_init(void);
