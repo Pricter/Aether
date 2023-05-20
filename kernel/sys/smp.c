@@ -57,11 +57,13 @@ void smp_init(void) {
 	/* Local array to keep track of the cores */
 	cpu_core_local = malloc(sizeof(core_t) * smp_response->cpu_count);
 
-	/* Manually initialize the first core struct since it does not go to core_start */
+	/* Manually initialize the first core since it does not go to core_start */
 	core_t* first = &cpu_core_local[0];
 	first->core_number = 0;
 	first->lapic_id = smp_response->bsp_lapic_id;
 	first->pagemap = mmu_kernel_pagemap;
+
+	lapic_init();
 
 	/* Loop through all the cores */
 	for(uint64_t i = 0; i < smp_response->cpu_count; i++) {
