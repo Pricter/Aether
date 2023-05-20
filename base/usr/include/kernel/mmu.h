@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <kernel/spinlock.h>
+#include <limine.h>
 
 typedef uint64_t pagemap_t;
 

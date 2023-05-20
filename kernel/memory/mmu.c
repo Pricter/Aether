@@ -390,13 +390,9 @@ void mmu_init(void) {
 
 	struct limine_kernel_address_response *kaddr = kaddr_request.response;
 
-	for(uint64_t i = 0; i < response->entry_count; i++) {
-		uintptr_t base = entries[i]->base;
-		uintptr_t end = entries[i]->base + entries[i]->length;
-		for(uintptr_t i = base; i < end; i += 0x1000) {
-			mmu_map_page(mmu_kernel_pagemap, i, i, PTE_PRESENT | PTE_WRITABLE);
-			mmu_map_page(mmu_kernel_pagemap, i + HHDM_HIGHER_HALF, i, PTE_PRESENT | PTE_WRITABLE);
-		}
+	for(uint64_t i = 0; i < total_memory; i += 0x1000) {
+		mmu_map_page(mmu_kernel_pagemap, i, i, PTE_PRESENT | PTE_WRITABLE);
+		mmu_map_page(mmu_kernel_pagemap, i + HHDM_HIGHER_HALF, i, PTE_PRESENT | PTE_WRITABLE);
 	}
 
 	/* Map the text section */

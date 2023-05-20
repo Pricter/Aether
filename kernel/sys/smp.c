@@ -7,6 +7,8 @@
 #include <kernel/gdt.h>
 #include <kernel/irq.h>
 
+extern void lapic_init(void);
+
 /* Request limine for all cores information */
 static volatile struct limine_smp_request smp_request = {
 	.id = LIMINE_SMP_REQUEST,
@@ -35,6 +37,9 @@ void core_start(struct limine_smp_info *core) {
 
 	/* Load pagemap in the core */
 	mmu_switch_pagemap(mmu_kernel_pagemap);
+
+	/* Initialize local APIC */
+	lapic_init();
 
 	kprintf("smp: Processor #%ld online\n", core_local->core_number);
 

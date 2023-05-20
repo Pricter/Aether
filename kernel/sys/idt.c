@@ -10,6 +10,7 @@
 #include <stddef.h>
 #include <kernel/kprintf.h>
 #include <kernel/symbols.h>
+#include <kernel/spinlock.h>
 
 static struct idt_pointer idtp;
 static idt_entry_t idt[256];
@@ -88,6 +89,8 @@ void fatal(void) {
 	}
 }
 
+spinlock_t paniclock = SPINLOCK_ZERO;
+
 /**
  * Handle fatal exceptions.
  * 
@@ -98,6 +101,7 @@ void fatal(void) {
  * @param faulting_address When available, the address leading to this fault
 */
 static void panic(const char* desc, struct regs* r, uintptr_t faulting_address) {
+	spinlock_acquire(&paniclock);
 	kprintf("\nJeff kernel panic! (%s) at %p\n", desc, faulting_address);
 
 	kprintf("Registers at interrupt:\n");
@@ -121,7 +125,8 @@ static void panic(const char* desc, struct regs* r, uintptr_t faulting_address) 
 		gs_base_high, gs_base_low, kgs_base_high, kgs_base_low);
 	
 	stacktrace();
-
+	
+	spinlock_release(&paniclock);
 	fatal();
 }
 
@@ -148,7 +153,7 @@ struct regs* isr_handler_inner(struct regs* r) {
 		EXC(11, "segment not present")
 		EXC(12, "stack-segment fault")
 		case 13: break; // TODO: Make a handler
-		case 14: break; // TODO: Make a handler
+		EXC(14, "page fault") // TODO: Make a handler
 		EXC(16, "floating point exception")
 		EXC(17, "alignment check")
 		EXC(18, "machine check")
