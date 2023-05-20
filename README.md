@@ -51,4 +51,3 @@ $ dd if=jeff.iso of=/dev/sdx
 
 - The kernel crashes if there is not enough memory instead of using a page file
 - The kernel finds the functions defined itself by using the kernel_file feature
-- TODO: Implement a print queue for other cores to wait until one printing is done

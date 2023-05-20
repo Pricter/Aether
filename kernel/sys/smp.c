@@ -68,14 +68,6 @@ void smp_init(void) {
 
 		core->extra_argument = (uint64_t)current;
 		core->goto_address = core_start; /* Jump to core start */
-
-		/**
-		 * Safe guard, why?: multiprocessing is a bitch
-		 * This prevents the core 0 to start any other
-		 * cores before this one is done initializing so
-		 * the prints and memory doesnt get mixed up
-		*/
-		while(initialized != i) asm ("pause");
 	}
 
 	/* Safe guard, core 0 does not jump to core_start as it is already running */

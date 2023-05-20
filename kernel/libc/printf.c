@@ -7,6 +7,9 @@
 #include <deps/flanterm.h>
 #include <kernel/mmu.h>
 #include <deps/printf.h>
+#include <kernel/spinlock.h>
+
+spinlock_t printlock = SPINLOCK_ZERO;
 
 /* To crash if no framebuffers */
 extern void fatal();
@@ -53,6 +56,8 @@ void printf_init(void) {
 }
 
 void kprintf(const char* fmt, ...) {
+	spinlock_acquire(&printlock);
+
 	char *buffer = malloc(1024);
 
 	va_list args;
@@ -62,4 +67,5 @@ void kprintf(const char* fmt, ...) {
 	flanterm_write(context, buffer, length);
 
 	va_end(args);
+	spinlock_release(&printlock);
 }
