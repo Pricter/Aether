@@ -36,6 +36,7 @@ extern struct regs *_isr28(struct regs*);
 extern struct regs *_isr29(struct regs*);
 extern struct regs *_isr30(struct regs*);
 extern struct regs *_isr31(struct regs*);
+extern struct regs *_isr123(struct regs*); /* Timer interrupt */
 extern struct regs *_isr128(struct regs*); /* Syscall */
 
 typedef struct regs * (*interrupt_handler_t)(struct regs *);
@@ -60,10 +61,5 @@ struct idt_pointer {
 	uintptr_t base;
 } __attribute__((packed));
 
-typedef int (*irq_handler_chain_t) (struct regs*);
-extern void irq_install_handler(size_t irq, irq_handler_chain_t handler, const char *desc);
-extern const char *get_irq_handler(int irq, int chain);
-
 extern void idt_load(void *);
-
 void idt_reload(void);

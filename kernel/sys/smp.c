@@ -38,9 +38,6 @@ void core_start(struct limine_smp_info *core) {
 	/* Load pagemap in the core */
 	mmu_switch_pagemap(mmu_kernel_pagemap);
 
-	/* Initialize local APIC */
-	lapic_init();
-
 	kprintf("smp: Processor #%ld online\n", core_local->core_number);
 
 	/* Add the initialized statement */
@@ -62,8 +59,6 @@ void smp_init(void) {
 	first->core_number = 0;
 	first->lapic_id = smp_response->bsp_lapic_id;
 	first->pagemap = mmu_kernel_pagemap;
-
-	lapic_init();
 
 	/* Loop through all the cores */
 	for(uint64_t i = 0; i < smp_response->cpu_count; i++) {
