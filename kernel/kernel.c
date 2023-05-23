@@ -24,13 +24,6 @@ extern void symbols_init(void);
 extern void printf_init(void);
 extern void smp_init(void);
 
-extern unsigned long tsc_mhz;
-
-static volatile struct limine_terminal_request terminal_request = {
-    .id = LIMINE_TERMINAL_REQUEST,
-    .revision = 0,
-};
-
 /**
  * The kernel start function. The kernel begins executing from
  * this function, this is called by the limine bootloader.

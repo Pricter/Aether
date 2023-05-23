@@ -41,3 +41,7 @@ typedef struct core {
 	/* Current core pagemap */
 	pagemap_t *pagemap;
 } core_t;
+
+typedef struct cpu_info {
+	char* vendorId; /* Vendor, Ex: Intel, AMD, Qemu */
+} cpu_info_t;

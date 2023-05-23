@@ -255,7 +255,7 @@ static uint64_t *get_next_level(uint64_t* top_level, size_t idx, bool allocate) 
 	if(!allocate) return NULL;
 
 	/* Request frame */
-	void* next_level = mmu_request_frame();
+	void* next_level = (void*)mmu_request_frame();
 	
 	/**
      * Because we return next_level + hhdm and any function is using that we need to 
@@ -367,7 +367,7 @@ void mmu_init(void) {
     }
 
     /* Set the bitmap address to the free_segment_bitmap */
-    bitmap = free_segment_bitmap;
+    bitmap = (uint8_t*)free_segment_bitmap;
 
     /* Set all the bits to 1, all the frames will be set to used */
     memset(bitmap, 0xff, bytesOfBitmap);
@@ -386,7 +386,7 @@ void mmu_init(void) {
     }
 
 	/* Assign a page in the hhdm */
-	mmu_kernel_pagemap = mmu_request_frame() + HHDM_HIGHER_HALF;
+	mmu_kernel_pagemap = (pagemap_t*)(mmu_request_frame() + HHDM_HIGHER_HALF);
 
 	struct limine_kernel_address_response *kaddr = kaddr_request.response;
 

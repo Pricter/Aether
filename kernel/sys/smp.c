@@ -17,13 +17,13 @@ static volatile struct limine_smp_request smp_request = {
 };
 
 /* Number of cores initialized */
-static int initialized = 0;
+static uint64_t initialized = 0;
 
 /* Local core list to keep track of cores */
 core_t *cpu_core_local = NULL;
 
 void core_start(struct limine_smp_info *core) {
-	core_t *core_local = core->extra_argument;
+	core_t *core_local = (core_t*)core->extra_argument;
 
 	/* Set the struct fields to their appropriate values */
 	core_local->lapic_id = core->lapic_id;

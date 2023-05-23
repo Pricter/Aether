@@ -11,6 +11,7 @@
 #include <kernel/kprintf.h>
 #include <kernel/symbols.h>
 #include <kernel/spinlock.h>
+#include <kernel/symbols.h>
 
 static struct idt_pointer idtp;
 static idt_entry_t idt[256];

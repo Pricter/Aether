@@ -19,3 +19,4 @@ extern ksym_func_t* function_table;
 
 void symbols_init(void);
 char* symbols_search(uintptr_t addr);
+void stacktrace(void);

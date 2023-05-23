@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <kernel/gdt.h>
 
 /* GDT Descritor entry */
 struct gdt_descriptor {

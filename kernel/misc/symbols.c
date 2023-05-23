@@ -6,6 +6,7 @@
 #include <elf.h>
 #include <memory.h>
 #include <kernel/symbols.h>
+#include <string.h>
 
 extern void fatal(void);
 
@@ -40,7 +41,8 @@ void symbols_init(void) {
 
 	/* Set startings addresses for Section headers, string header */
 	Elf64_Shdr* shdr = (Elf64_Shdr*)JMP_BYTES(hdr, hdr->e_shoff);
-	Elf64_Shdr* string_shdr = JMP_BYTES(kfile_address, (hdr->e_shentsize * hdr->e_shstrndx + hdr->e_shoff));
+	Elf64_Shdr* string_shdr = (Elf64_Shdr*) JMP_BYTES(kfile_address,
+		(hdr->e_shentsize * hdr->e_shstrndx + hdr->e_shoff));
 	char* string_table = kfile_address + string_shdr->sh_offset;
 
 	/* Find .symtab and .strtab sections */
@@ -48,10 +50,10 @@ void symbols_init(void) {
 		const char* name = (const char*)JMP_BYTES(string_table, shdr->sh_name);
 		if(!strcmp(name, ".symtab")) {
 			symbol_table_hdr = shdr;
-			symbol_table = JMP_BYTES(kfile_address, shdr->sh_offset);
+			symbol_table = (Elf64_Sym*)JMP_BYTES(kfile_address, shdr->sh_offset);
 			symbol_count = shdr->sh_size / sizeof(Elf64_Sym);
 		}
-		if(!strcmp(name, ".strtab")) symbol_string_table = JMP_BYTES(kfile_address, shdr->sh_offset);
+		if(!strcmp(name, ".strtab")) symbol_string_table = (char*)JMP_BYTES(kfile_address, shdr->sh_offset);
 		shdr = (Elf64_Shdr*)JMP_BYTES(shdr, hdr->e_shentsize);
 	}
 
@@ -73,7 +75,7 @@ void symbols_init(void) {
 		/* Only add entry if symbol is a function */
 		if(ELF64_ST_TYPE(symbol_table[i].st_info) == STT_FUNC) {
 			function_table[function_count] = (ksym_func_t){
-				.name = (uintptr_t)GET_NAME(symbol_string_table, symbol_table[i].st_name),
+				.name = (char*)GET_NAME(symbol_string_table, symbol_table[i].st_name),
 				.addr = symbol_table[i].st_value
 			};
 			function_table[function_count - 1].next = &function_table[function_count];
@@ -93,7 +95,7 @@ void symbols_init(void) {
  * @param address The address to match
 */
 char* symbols_search(uintptr_t address) {
-    ksym_func_t* closest_symbol = symbol_table;
+    ksym_func_t* closest_symbol = (ksym_func_t*)((uint64_t)symbol_table);
 
 	for(uint64_t i = 0; i < function_count; i++) {
 		if(function_table[i].addr <= address && function_table[i].addr > closest_symbol->addr) {

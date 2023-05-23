@@ -47,7 +47,7 @@ static inline struct slab *slab_for(size_t size) {
 
 static void create_slab(struct slab *slab, size_t ent_size) {
     slab->lock = (spinlock_t)SPINLOCK_ZERO;
-    slab->first_free = mmu_request_frame() + HHDM_HIGHER_HALF;
+    slab->first_free = (void**)(mmu_request_frame() + HHDM_HIGHER_HALF);
     slab->ent_size = ent_size;
 
     size_t header_offset = ALIGN_UP(sizeof(struct slab_header), ent_size);
@@ -117,7 +117,7 @@ void *malloc(size_t size) {
     }
 
     size_t page_count = DIV_ROUNDUP(size, PAGE_SIZE);
-    void *ret = mmu_request_frames(page_count + 1);
+    void *ret = (void*)mmu_request_frames(page_count + 1);
 
     ret += HHDM_HIGHER_HALF;
     struct alloc_metadata *metadata = (struct alloc_metadata *)ret;
