@@ -82,9 +82,6 @@ void symbols_init(void) {
 			function_count++;
 		}
 	}
-
-	/* Print function count */
-	kprintf("symbols: Found %lu functions\n", function_count);
 }
 
 /**

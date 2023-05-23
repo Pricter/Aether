@@ -23,6 +23,7 @@ extern void idt_init(void);
 extern void symbols_init(void);
 extern void printf_init(void);
 extern void smp_init(void);
+extern void cpuinfo_init(void);
 
 /**
  * The kernel start function. The kernel begins executing from
@@ -60,6 +61,9 @@ void _start(void) {
 
 	/* Initialize kernel symbols */
 	symbols_init();
+	
+	/* Load the CPU information */
+	cpuinfo_init();
 
 	/* Initialize multicore */
 	smp_init();

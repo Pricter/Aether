@@ -76,5 +76,4 @@ void smp_init(void) {
 	while(initialized != smp_response->cpu_count - 1) {
 		asm ("pause");
 	}
-	kprintf("smp: %ld cores intialized\n", initialized);
 }
