@@ -231,7 +231,7 @@ uintptr_t mmu_request_frames(uint64_t num) {
 */
 void mmu_free_frames(void* addr, uint64_t pages) {
 	for(uint64_t i = 0; i < pages; i++) {
-		mmu_frame_clear(addr + (i * 4096));
+		mmu_frame_clear((uintptr_t)(addr + (i * 4096)));
 	}
 }
 
@@ -396,7 +396,7 @@ void mmu_init(void) {
 	}
 
 	/* Map the text section */
-	for(uintptr_t i = text_start; i < text_end; i += 0x1000) {
+	for(uintptr_t i = (uintptr_t)text_start; i < (uintptr_t)text_end; i += 0x1000) {
         mmu_map_page(
             mmu_kernel_pagemap,
             i,
@@ -405,7 +405,7 @@ void mmu_init(void) {
     }
 
 	/* Map the rodata section */
-    for(uintptr_t i = rodata_start; i < rodata_end; i += 0x1000) {
+    for(uintptr_t i = (uintptr_t)rodata_start; i < (uintptr_t)rodata_end; i += 0x1000) {
         mmu_map_page(
             mmu_kernel_pagemap,
             i,
@@ -414,7 +414,7 @@ void mmu_init(void) {
     }
 
 	/* Map the data and bss sections (both have the same end in the linker file) */
-    for(uintptr_t i = data_start; i < data_end; i += 0x1000) {
+    for(uintptr_t i = (uintptr_t)data_start; i < (uintptr_t)data_end; i += 0x1000) {
         mmu_map_page(
             mmu_kernel_pagemap,
             i,

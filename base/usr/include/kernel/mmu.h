@@ -17,19 +17,19 @@ typedef uint64_t pagemap_t;
 #define PTE_GET_ADDR(VALUE) ((VALUE) & PTE_ADDR_MASK)
 #define PTE_GET_FLAGS(VALUE) ((VALUE) & ~PTE_ADDR_MASK)
 
-#define PTE_PRESENT (1 << 0) /* If the entry is present */
-#define PTE_WRITABLE (1 << 1) /* If the entry has write access */
-#define PTE_USER (1 << 2) /* Priviledge level */
-#define PTE_WRITE_THOUGH (1 << 3) /* If bit is set, then write-through caching is set */
-#define PTE_CACHE_DISABLE (1 << 4) /* If this is set, then the page will not be cached */
-#define PTE_LARGER_PAGE (1 << 6) /* If this is set then the page will be a 4MiB page */
+#define PTE_PRESENT ((uint64_t)1 << 0) /* If the entry is present */
+#define PTE_WRITABLE ((uint64_t)1 << 1) /* If the entry has write access */
+#define PTE_USER ((uint64_t)1 << 2) /* Priviledge level */
+#define PTE_WRITE_THOUGH ((uint64_t)1 << 3) /* If bit is set, then write-through caching is set */
+#define PTE_CACHE_DISABLE ((uint64_t)1 << 4) /* If this is set, then the page will not be cached */
+#define PTE_LARGER_PAGE ((uint64_t)1 << 6) /* If this is set then the page will be a 4MiB page */
 /**
  * NX: If the NXE bit is set in the EFER register, then
  * instructions are not allowed to be executed at addresses within
  * whatever page XD is set. if EFER.NXE is 0, then the XD bit is
  * reserved and should be set to 0.
 */
-#define PTE_NX (1 << 63)
+#define PTE_NX ((uint64_t)1 << 63)
 
 extern volatile struct limine_hhdm_request hhdm_request;
 

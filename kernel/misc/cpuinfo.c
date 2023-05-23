@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <cpuid.h>
+#include <memory.h>
 
 cpu_info_t* cpu_info = NULL;
 
