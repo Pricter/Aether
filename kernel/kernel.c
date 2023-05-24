@@ -17,6 +17,7 @@
 #include <kernel/symbols.h>
 #include <string.h>
 
+extern void debug_printf_init(void);
 extern void gdt_init(void);
 extern void mmu_init(void);
 extern void slab_init(void);
@@ -35,6 +36,8 @@ extern uint64_t bytesOfBitmap;
  * It prints the kernel information and initializes the kernel
 */
 void _start(void) {
+	debug_printf_init();
+
 	/* Initialize gdt */
 	gdt_init();
 	
@@ -51,16 +54,17 @@ void _start(void) {
 	printf_init();
 
 	/* Print kernel info */
-	kprintf("%s %d.%d.%d-%s %s compiled by \"%s\" on \"%s %s\"\n",
+	kprintf("%s %d.%d.%d-%s running on %s\n",
         __kernel_name,
         __kernel_version_major,
         __kernel_version_minor,
         __kernel_version_lower,
         __kernel_version_suffix,
-        __kernel_arch,
-        __kernel_compiler_version,
-        __kernel_build_date,
-        __kernel_build_time);
+        __kernel_arch);
+	kdprintf("Kernel compiled by \"%s\" on \"%s %s\"\n",
+		__kernel_compiler_version,
+		__kernel_build_date,
+		__kernel_build_time);
 
 	/* Initialize kernel symbols */
 	symbols_init();

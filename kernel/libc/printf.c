@@ -12,6 +12,12 @@
 
 spinlock_t printlock = SPINLOCK_ZERO;
 
+/* Print to framebuffer, also to serial if gcc -DSERIAL_LOG is passed */
+printf_type kprintf = NULL;
+
+/* Only print to serial */
+printf_type kdprintf = NULL;
+
 /* To crash if no framebuffers */
 extern void fatal();
 
@@ -31,6 +37,8 @@ struct limine_framebuffer* framebuffer = NULL;
 
 /* Printf context */
 struct flanterm_context* context = NULL;
+
+#define COM1 0x3F8
 
 /* Initialize flanterm */
 void printf_init(void) {
@@ -54,11 +62,37 @@ void printf_init(void) {
 	
 	/* We dont want the ugly block cursor */
 	context->cursor_enabled = false;
+
+	/* Set print function pointers */
+	kprintf = kernel_printf;
 }
 
-#define COM1 0x3F8
+void debug_printf_init(void) {
+	/* Enable DLAB (Divisor Latch Access Bit) */
+	outportb(COM1 + 3, 0x80);
 
-void kprintf(const char* fmt, ...) {
+	/* Set divisor low byte (115200 baud) */
+	outportb(COM1 + 0, 0x03);
+
+	/* Set divisor high byte */
+	outportb(COM1 + 1, 0x00);
+
+	/* Set parity */
+	outportb(COM1 + 3, 0x03);
+
+	/* Enable FIFO, clear transmit and receive FIFO queues */
+    outportb(COM1 + 2, 0xC7);
+
+	/* Clear them */
+    outportb(COM1 + 4, 0x0B);
+
+	/* Enable interrupts */
+	outportb(COM1 + 1, 0x01);
+
+	kdprintf = kernel_debug_printf;
+}
+
+void kernel_printf(const char* fmt, ...) {
 	spinlock_acquire(&printlock);
 
 	char buffer[1024];
@@ -74,6 +108,24 @@ void kprintf(const char* fmt, ...) {
 		outportb(COM1, buffer[i]);
 	}
 #endif
+
+	va_end(args);
+	spinlock_release(&printlock);
+}
+
+void kernel_debug_printf(const char* fmt, ...) {
+	spinlock_acquire(&printlock);
+
+	char buffer[1024];
+
+	va_list args;
+	va_start(args, fmt);
+
+	int length = vsnprintf(buffer, 1024, fmt, args);
+
+	for(int i = 0; i <= length; i++) {
+		outportb(COM1, buffer[i]);
+	}
 
 	va_end(args);
 	spinlock_release(&printlock);
