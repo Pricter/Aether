@@ -117,9 +117,8 @@ void *malloc(size_t size) {
     }
 
     size_t page_count = DIV_ROUNDUP(size, PAGE_SIZE);
-    void *ret = (void*)mmu_request_frames(page_count + 1);
+    void *ret = (void*)mmu_request_frames(page_count + 1) + HHDM_HIGHER_HALF;
 
-    ret += HHDM_HIGHER_HALF;
     struct alloc_metadata *metadata = (struct alloc_metadata *)ret;
 
     metadata->pages = page_count;

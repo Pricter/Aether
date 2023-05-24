@@ -151,7 +151,7 @@ bool mmu_test_frame(uintptr_t address) {
         uint64_t byteIndex = index / 8;
         uint8_t bitIndex = index % 8;
 
-        /* Weird stuff */
+        /* Check if the bit tracking the page is set */
         return (bitmap[byteIndex] & (1 << bitIndex)) != 0;
     }
 	return false;
@@ -255,18 +255,18 @@ static uint64_t *get_next_level(uint64_t* top_level, size_t idx, bool allocate) 
 	if(!allocate) return NULL;
 
 	/* Request frame */
-	void* next_level = (void*)mmu_request_frame();
+	void* next_level = (void*)mmu_request_frame() + HHDM_HIGHER_HALF;
 	
 	/**
      * Because we return next_level + hhdm and any function is using that we need to 
 	 * memset next_level + hhdm instead of the address returned by mmu_request_frame
 	 */
-	memset(next_level + HHDM_HIGHER_HALF, 0, PAGE_SIZE);
+	memset(next_level, 0, PAGE_SIZE);
 	
 	/* Set the flags to present, writable, user accessable */
-	top_level[idx] = (uint64_t)next_level | PTE_PRESENT | PTE_WRITABLE | PTE_USER;
+	top_level[idx] = (uint64_t)(next_level - HHDM_HIGHER_HALF) | PTE_PRESENT | PTE_WRITABLE | PTE_USER;
 
-	return next_level + HHDM_HIGHER_HALF;
+	return next_level;
 }
 
 /**
@@ -385,14 +385,25 @@ void mmu_init(void) {
         }
     }
 
+	/* Set out bitmap to used pages */
+	uint64_t bitmapPages = bytesOfBitmap / 4096;
+	for(uint64_t i = 0; i < bitmapPages; i++) {
+		mmu_frame_set(bitmap + (i * 4096));
+	}
+
 	/* Assign a page in the hhdm */
 	mmu_kernel_pagemap = (pagemap_t*)(mmu_request_frame() + HHDM_HIGHER_HALF);
 
 	struct limine_kernel_address_response *kaddr = kaddr_request.response;
 
 	for(uint64_t i = 0; i < total_memory; i += 0x1000) {
-		mmu_map_page(mmu_kernel_pagemap, i, i, PTE_PRESENT | PTE_WRITABLE);
 		mmu_map_page(mmu_kernel_pagemap, i + HHDM_HIGHER_HALF, i, PTE_PRESENT | PTE_WRITABLE);
+	}
+
+	/* Apparently identity mapping is not good so only map the bitmap */
+	for(uint64_t i = 0; i < bitmapPages; i++) {
+		uintptr_t addr = (uintptr_t)(bitmap + (i * 4096));
+		mmu_map_page(mmu_kernel_pagemap,  addr, addr, PTE_PRESENT | PTE_WRITABLE);
 	}
 
 	/* Map the text section */
