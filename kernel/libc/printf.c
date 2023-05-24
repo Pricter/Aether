@@ -61,7 +61,7 @@ void printf_init(void) {
 void kprintf(const char* fmt, ...) {
 	spinlock_acquire(&printlock);
 
-	char *buffer = malloc(1024);
+	char buffer[1024];
 
 	va_list args;
 	va_start(args, fmt);

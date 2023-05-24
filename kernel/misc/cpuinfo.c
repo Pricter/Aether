@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <cpuid.h>
 #include <memory.h>
+#include <string.h>
 
 cpu_info_t* cpu_info = NULL;
 
@@ -51,6 +52,7 @@ void cpuinfo_init(void) {
         memcpy(name_ptr + 11, &edx, sizeof(uint32_t));
 
         cpu_info->cpuName[48] = '\0'; // Null-terminate the string
+		cpu_info->cpuName = strctrim(cpu_info->cpuName, ' ');
         kprintf("%s, ", cpu_info->cpuName);
     } else {
         kprintf("Unknown, ");

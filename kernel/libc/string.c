@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <kernel/types.h>
+#include <kernel/mmu.h>
 
 size_t strlen(const char* s) {
 	const char* a = s;
@@ -22,4 +23,20 @@ int strcmp(const char* s1, const char* s2) {
 		s2++;
 	}
 	return *(const unsigned char*)s1 - *(const unsigned char*)s2;
+}
+
+char* strctrim(const char* s, char c) {
+	size_t len = strlen(s);
+	const char* end = s + len - 1;
+
+	while(*end == c && end >= s) {
+		--end;
+	}
+
+	size_t newLen = end - s + 1;
+	char* trimmed = (char*)malloc(newLen + 1);
+	memcpy(trimmed, s, newLen);
+	trimmed[newLen] = '\0';
+	
+	return trimmed;
 }
