@@ -8,6 +8,7 @@
 #include <kernel/mmu.h>
 #include <deps/printf.h>
 #include <kernel/spinlock.h>
+#include <kernel/ports.h>
 
 spinlock_t printlock = SPINLOCK_ZERO;
 
@@ -55,6 +56,8 @@ void printf_init(void) {
 	context->cursor_enabled = false;
 }
 
+#define COM1 0x3F8
+
 void kprintf(const char* fmt, ...) {
 	spinlock_acquire(&printlock);
 
@@ -65,6 +68,12 @@ void kprintf(const char* fmt, ...) {
 
 	int length = vsnprintf(buffer, 1024, fmt, args);
 	flanterm_write(context, buffer, length);
+
+#ifdef SERIAL_LOG
+	for(int i = 0; i <= length; i++) {
+		outportb(COM1, buffer[i]);
+	}
+#endif
 
 	va_end(args);
 	spinlock_release(&printlock);

@@ -388,7 +388,7 @@ void mmu_init(void) {
 	/* Set out bitmap to used pages */
 	uint64_t bitmapPages = bytesOfBitmap / 4096;
 	for(uint64_t i = 0; i < bitmapPages; i++) {
-		mmu_frame_set(bitmap + (i * 4096));
+		mmu_frame_set((uintptr_t)(bitmap + (i * 4096)));
 	}
 
 	/* Assign a page in the hhdm */

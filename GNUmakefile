@@ -3,9 +3,11 @@ ISO_NAME = jeff
 .PHONY: all
 all: $(ISO_NAME).iso
 
+EMU_ARGS = -M q35 -m 2G -boot d -D qlog.txt -d int -no-reboot -smp 4 -serial stdio -enable-kvm
+
 .PHONY: run run-uefi run-hdd run-hdd-uefi
 run: $(ISO_NAME).iso
-	qemu-system-x86_64 -M q35 -m 2G -cdrom $(ISO_NAME).iso -boot d -D qlog.txt -d int -no-reboot -monitor stdio -smp 4
+	qemu-system-x86_64 $(EMU_ARGS) -cdrom $(ISO_NAME).iso 
 
 limine:
 	git clone https://github.com/limine-bootloader/limine.git --branch=v4.x-branch-binary --depth=1
