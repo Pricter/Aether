@@ -29,6 +29,10 @@ extern void cpuinfo_init(void);
 
 extern uint64_t bytesOfBitmap;
 
+void func(void) {
+	kprintf("irq\n");
+}
+
 /**
  * The kernel start function. The kernel begins executing from
  * this function, this is called by the limine bootloader.
@@ -74,8 +78,6 @@ void _start(void) {
 	
 	/* Load the CPU information */
 	cpuinfo_init();
-
-	asm ("int $0x20");
 
     // We are done. Hang up
     asm ("cli");
