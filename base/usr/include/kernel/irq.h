@@ -36,7 +36,7 @@ extern struct regs *_isr28(struct regs*);
 extern struct regs *_isr29(struct regs*);
 extern struct regs *_isr30(struct regs*);
 extern struct regs *_isr31(struct regs*);
-extern struct regs *_isr123(struct regs*); /* Timer interrupt */
+extern struct regs *_isr32(struct regs*); /* Timer interrupt */
 extern struct regs *_isr128(struct regs*); /* Syscall */
 
 typedef struct regs * (*interrupt_handler_t)(struct regs *);
@@ -60,6 +60,11 @@ struct idt_pointer {
 	uint16_t  limit;
 	uintptr_t base;
 } __attribute__((packed));
+
+typedef void (*irq_t)(void);
+
+#define IRQ_COUNT 1
+extern irq_t irqs[IRQ_COUNT];
 
 extern void idt_load(void *);
 void idt_reload(void);

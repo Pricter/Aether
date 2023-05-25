@@ -65,6 +65,9 @@ void _start(void) {
 		__kernel_compiler_version,
 		__kernel_build_date,
 		__kernel_build_time);
+	
+	/* Initialize multicore */
+	smp_init();
 
 	/* Initialize kernel symbols */
 	symbols_init();
@@ -72,8 +75,7 @@ void _start(void) {
 	/* Load the CPU information */
 	cpuinfo_init();
 
-	/* Initialize multicore */
-	smp_init();
+	asm ("int $0x20");
 
     // We are done. Hang up
     asm ("cli");

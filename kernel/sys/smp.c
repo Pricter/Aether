@@ -38,7 +38,7 @@ void core_start(struct limine_smp_info *core) {
 	/* Load pagemap in the core */
 	mmu_switch_pagemap(mmu_kernel_pagemap);
 
-	kprintf("smp: Processor #%ld online\n", core_local->core_number);
+	kdprintf("smp: Processor #%ld online\n", core_local->core_number);
 
 	/* Add the initialized statement */
 	initialized++;

@@ -59,6 +59,8 @@ ISR_NOERR 29 /* mmu Communication exception */
 ISR_NOERR 30 /* Security exception */
 ISR_NOERR 31 /* Reserved */
 
+ISR_NOERR 32 /* IRQs are just the same as an exception */
+
 /* Syscall */
 ISR_NOERR 128
 

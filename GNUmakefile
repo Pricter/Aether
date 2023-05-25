@@ -3,7 +3,7 @@ ISO_NAME = jeff
 .PHONY: all
 all: $(ISO_NAME).iso
 
-EMU_ARGS = -M q35 -m 2G -boot d -D qlog.txt -d int -no-reboot -smp 4 -serial stdio -enable-kvm
+EMU_ARGS = -M q35 -m 2G -boot d -D qlog.txt -d int -no-reboot -smp 4 -serial stdio
 
 .PHONY: run run-uefi run-hdd run-hdd-uefi
 run: $(ISO_NAME).iso

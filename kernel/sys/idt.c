@@ -71,7 +71,10 @@ void idt_init(void) {
 	idt_set_gate(30, _isr30, 0x28, 0x8E, 0);
 	idt_set_gate(31, _isr31, 0x28, 0x8E, 0);
 
+	idt_set_gate(32, _isr32, 0x08, 0x8E, 1); /* PIT System Clock IRQ 0 */
 	idt_set_gate(128, _isr128, 0x08, 0x8E, 1); /* Legacy system call entry point, called by userspace. */
+
+	idt_reload();
 }
 
 void idt_reload(void) {
@@ -101,9 +104,9 @@ spinlock_t paniclock = SPINLOCK_ZERO;
  * @param r Interrupt register context
  * @param faulting_address When available, the address leading to this fault
 */
-static void panic(const char* desc, struct regs* r, uintptr_t faulting_address) {
+static void panic(const char* desc, struct regs* r) {
 	spinlock_acquire(&paniclock);
-	kprintf("\nJeff kernel panic! (%s) at %p\n", desc, faulting_address);
+	kprintf("\nJeff kernel panic! (%s) at %p\n", desc, r->rip);
 
 	kprintf("Registers at interrupt:\n");
 	kprintf("  $rip=0x%016lx\n", r->rip);
@@ -132,14 +135,23 @@ static void panic(const char* desc, struct regs* r, uintptr_t faulting_address) 
 }
 
 static void _exception(struct regs* r, const char* description) {
-	/* If we are in kernel, then panic */
-	// TODO: Doesnt work, fix
-	//if(r->cs == 0x08) {
-	panic(description, r, r->int_no);
-	//}
+	if((r->cs & 0x3) == 0) {
+		panic(description, r);
+	}
+}
+
+irq_t irqs[IRQ_COUNT] = {0};
+
+static void _handle_irq(struct regs* r, int irqIndex) {
+	irq_t handler = irqs[irqIndex];
+	if(!handler) {
+		panic("Received IRQ without a handler", r);
+	}
+	handler();
 }
 
 #define EXC(i, n) case i: _exception(r, n); break;
+#define IRQ(i) case i: _handle_irq(r, i - 32); break;
 
 struct regs* isr_handler_inner(struct regs* r) {
 	switch (r->int_no) {
@@ -153,7 +165,7 @@ struct regs* isr_handler_inner(struct regs* r) {
 		EXC(10, "invalid TSS")
 		EXC(11, "segment not present")
 		EXC(12, "stack-segment fault")
-		case 13: break; // TODO: Make a handler
+		case 13: panic("Double fault", r); break;
 		EXC(14, "page fault") // TODO: Make a handler
 		EXC(16, "floating point exception")
 		EXC(17, "alignment check")
@@ -165,15 +177,17 @@ struct regs* isr_handler_inner(struct regs* r) {
 		EXC(29, "mmu communication exception")
 		EXC(30, "security exception")
 
-		default: panic("Unexpected interrupt", r, 0);
+		IRQ(32);
+
+		default: panic("Unexpected interrupt", r);
 	}
 
 	return r;
 }
 
 struct regs* isr_handler(struct regs* r) {
-    int from_userspace = r->cs != 0x08;
-    
+	kdprintf("idt: Received interrupt on %lu at address %p\n", r->int_no, r->rip);
+
     struct regs* out = isr_handler_inner(r);
     
 	return out;

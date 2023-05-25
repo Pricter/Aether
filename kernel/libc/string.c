@@ -3,6 +3,7 @@
 #include <string.h>
 #include <kernel/types.h>
 #include <kernel/mmu.h>
+#include <memory.h>
 
 size_t strlen(const char* s) {
 	const char* a = s;
