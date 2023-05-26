@@ -4,7 +4,7 @@ KERNEL: kernel.elf
 CC = gcc
 LD = ld
 
-KERNEL_CFLAGS  = -g -pipe -nostdinc -Wall -Wextra -std=gnu11 -O2
+KERNEL_CFLAGS  = -g -pipe -nostdinc -Wall -Wextra -std=gnu11 -O3
 KERNEL_CFLAGS += -DPRINTF_ALIAS_STANDARD_FUNCTION_NAMES_HARD -DSERIAL_LOG
 KERNEL_CFLAGS += -D_KERNEL_ -DKERNEL_ARCH=x86_64 -DKERNEL_GIT_TAG=$(shell ../util/git-tag.sh)
 KERNEL_CFLAGS += -ffreestanding -fno-stack-protector -fno-stack-check -fno-PIE

@@ -26,6 +26,7 @@ extern void symbols_init(void);
 extern void printf_init(void);
 extern void smp_init(void);
 extern void cpuinfo_init(void);
+extern void pit_init(void);
 
 extern uint64_t bytesOfBitmap;
 
@@ -78,6 +79,9 @@ void _start(void) {
 	
 	/* Load the CPU information */
 	cpuinfo_init();
+
+	/* PIT System Clock */
+	pit_init();
 
     // We are done. Hang up
     asm ("cli");
