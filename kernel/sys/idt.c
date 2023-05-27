@@ -110,7 +110,7 @@ static void panic(const char* desc, struct regs* r) {
 
 	kprintf("Registers at interrupt:\n");
 	kprintf("  $rip=0x%016lx\n", r->rip);
-	kprintf("  $rsi=0x%016lx, $rdi=0x%016lx, $rsi=0x%016lx, $rdi=0x%016lx\n",
+	kprintf("  $rsi=0x%016lx, $rdi=0x%016lx, $rbp=0x%016lx, $rsp=0x%016lx\n",
 		r->rsi, r->rdi, r->rbp, r->rsp);
 	kprintf("  $rax=0x%016lx, $rbx=0x%016lx, $rcx=0x%016lx, $rdx=0x%016lx\n",
 		r->rax, r->rbx, r->rcx, r->rdx);
