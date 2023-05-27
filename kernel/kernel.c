@@ -11,11 +11,6 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/version.h>
-#include <kernel/mmu.h>
-#include <kernel/irq.h>
-#include <string.h>
-#include <kernel/symbols.h>
-#include <string.h>
 
 extern void debug_printf_init(void);
 extern void gdt_init(void);
