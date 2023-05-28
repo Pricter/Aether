@@ -6,8 +6,11 @@
 #include <kernel/cpu.h>
 #include <kernel/gdt.h>
 #include <kernel/irq.h>
+#include <kernel/apic.h>
 
 extern void lapic_init(void);
+
+uint32_t bsp_lapic_id = 0;
 
 /* Request limine for all cores information */
 static volatile struct limine_smp_request smp_request = {
@@ -38,6 +41,12 @@ void core_start(struct limine_smp_info *core) {
 	/* Load pagemap in the core */
 	mmu_switch_pagemap(mmu_kernel_pagemap);
 
+	/* Initialize LAPIC */
+	static spinlock_t lock = SPINLOCK_ZERO;
+	spinlock_acquire(&lock);
+	lapic_init();
+	spinlock_release(&lock);
+
 	kdprintf("smp: Processor #%ld online\n", core_local->core_number);
 
 	/* Add the initialized statement */
@@ -53,6 +62,8 @@ void smp_init(void) {
 
 	/* Local array to keep track of the cores */
 	cpu_core_local = malloc(sizeof(core_t) * smp_response->cpu_count);
+
+	bsp_lapic_id = smp_response->bsp_lapic_id;
 
 	/* Loop through all the cores */
 	for(uint64_t i = 0; i < smp_response->cpu_count; i++) {

@@ -68,6 +68,7 @@ extern irq_t irqs[IRQ_COUNT];
 
 void idt_init(void);
 void idt_reload(void);
+uint8_t idt_allocate(void);
 
 /* index is the IRQ index, not the index in the vector table, irq 0 would be 32 in the vector table */
 static inline void irq_install(irq_t irq, int index) {

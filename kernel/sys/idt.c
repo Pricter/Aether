@@ -16,6 +16,8 @@
 static struct idt_pointer idtp;
 static idt_entry_t idt[256];
 
+static uint8_t free_vector = 32;
+
 /**
  * @brief Initialize a gate
  */
@@ -28,6 +30,20 @@ void idt_set_gate(uint8_t num, interrupt_handler_t handler, uint16_t selector, u
 	idt[num].zero = 0;
 	idt[num].pad = 0;
 	idt[num].flags = flags | (userspace ? 0x60 : 0);
+}
+
+uint8_t idt_allocate(void) {
+	static spinlock_t lock = SPINLOCK_ZERO;
+	
+	spinlock_acquire(&lock);
+
+	if(free_vector == 0xf0) {
+		// TODO: Panic
+	}
+
+	uint8_t ret = free_vector++;
+	spinlock_release(&lock);
+	return ret;
 }
 
 /**

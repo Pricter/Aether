@@ -94,3 +94,4 @@ extern dlist_node_t* madt_ioapic;
 extern dlist_node_t* madt_ioapic_so;
 extern dlist_node_t* madt_ioapic_nmi;
 extern dlist_node_t* madt_lapic_nmi;
+extern uint64_t lapic_address;

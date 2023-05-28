@@ -63,6 +63,8 @@ void _start(void) {
 		__kernel_compiler_version,
 		__kernel_build_date,
 		__kernel_build_time);
+
+	acpi_init();
 	
 	/* Initialize multicore */
 	smp_init();
@@ -72,8 +74,6 @@ void _start(void) {
 	
 	/* Load the CPU information */
 	cpuinfo_init();
-
-	acpi_init();
 
 	/* PIT System Clock */
 	pit_init();

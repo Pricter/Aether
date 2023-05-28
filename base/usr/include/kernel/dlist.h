@@ -16,6 +16,6 @@ uint64_t dlist_length(dlist_node_t* head);
 
 #define DLIST_PUSH_BACK(list, item) dlist_push_back(list, (item))
 #define DLIST_PUSH_FRONT(list, item) dlist_push_front(list, (item))
-#define DLIST_GET_ITEM(list, index, type) (*((type*)dlist_get_item(list, index)))
+#define DLIST_GET_ITEM(list, index, type) ((type*)dlist_get_item(list, index))
 #define DLIST_EMPTY dlist_create_empty()
 #define DLIST_LENGTH(list) dlist_length(list)
