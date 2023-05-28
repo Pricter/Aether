@@ -44,7 +44,7 @@ void core_start(struct limine_smp_info *core) {
 	initialized++;
 
 	/* Exiting from this causes a triple fault */
-	halt();
+	if(!core_local->bsp) halt();
 }
 
 void smp_init(void) {
@@ -53,12 +53,6 @@ void smp_init(void) {
 
 	/* Local array to keep track of the cores */
 	cpu_core_local = malloc(sizeof(core_t) * smp_response->cpu_count);
-
-	/* Manually initialize the first core since it does not go to core_start */
-	core_t* first = &cpu_core_local[0];
-	first->core_number = 0;
-	first->lapic_id = smp_response->bsp_lapic_id;
-	first->pagemap = mmu_kernel_pagemap;
 
 	/* Loop through all the cores */
 	for(uint64_t i = 0; i < smp_response->cpu_count; i++) {
@@ -69,7 +63,14 @@ void smp_init(void) {
 		current->core_number = i;
 
 		core->extra_argument = (uint64_t)current;
-		core->goto_address = core_start; /* Jump to core start */
+		
+		/* If core is bsp then goto the function */
+		if(core->lapic_id != smp_response->bsp_lapic_id) {
+			core->goto_address = core_start; /* Jump to core start */
+		} else {
+			current->bsp = true;
+			core_start(core);
+		}
 	}
 
 	/* Safe guard, core 0 does not jump to core_start as it is already running */

@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <kernel/mmu.h>
+#include <stdbool.h>
 
 static inline void halt() {
 	asm ("cli");
@@ -40,6 +41,9 @@ typedef struct core {
 
 	/* Current core pagemap */
 	pagemap_t *pagemap;
+
+	/* If our core is the one that ran start */
+	bool bsp;
 } core_t;
 
 typedef struct cpu_info {
