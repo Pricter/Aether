@@ -50,7 +50,7 @@ struct madt_lapic {
 	uint8_t acpi_processor_id;
 	uint8_t apic_id;
 	uint32_t flags;
-};
+} __attribute__((packed));
 
 struct madt_ioapic {
 	struct madt_header hdr;
@@ -58,7 +58,7 @@ struct madt_ioapic {
 	uint8_t reserved;
 	uint32_t ioAPICAddress;
 	uint32_t systemIntBase;
-};
+} __attribute__((packed));
 
 struct madt_ioapic_so {
 	struct madt_header hdr;
@@ -66,7 +66,7 @@ struct madt_ioapic_so {
 	uint8_t irqSource;
 	uint32_t gsi;
 	uint16_t flags;
-};
+} __attribute__((packed));
 
 struct madt_ioapic_nmi {
 	struct madt_header hdr;
@@ -74,20 +74,20 @@ struct madt_ioapic_nmi {
 	uint8_t reserved;
 	uint16_t flags;
 	uint32_t gsi;
-};
+} __attribute__((packed));
 
 struct madt_lapic_nmi {
 	struct madt_header hdr;
 	uint8_t acpi_processor_id;
 	uint16_t flags;
 	uint8_t lint;
-};
+} __attribute__((packed));
 
 struct madt_lapic_new {
 	struct madt_header hdr;
 	uint16_t reserved;
 	uint64_t lapicAddress;
-};
+} __attribute__((packed));
 
 extern dlist_node_t* madt_lapic;
 extern dlist_node_t* madt_ioapic;
