@@ -24,3 +24,4 @@ void ioapic_irq_redirect(uint32_t lapic_id, uint8_t vector, uint8_t irq, bool st
 static struct madt_ioapic *ioapic_from_gsi(uint32_t gsi);
 void ioapic_set_gsi_redirect(uint32_t lapic_id, uint8_t vector, uint8_t gsi,
                               uint16_t flags, bool status);
+void lapic_oneshot(uint64_t us, uint8_t vector);

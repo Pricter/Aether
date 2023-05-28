@@ -2,6 +2,7 @@
 #include <kernel/ports.h>
 #include <kernel/pit.h>
 #include <kernel/apic.h>
+#include <kernel/cpu.h>
 
 #define LAPIC_REG_SPURIOUS 0xf0
 #define LAPIC_REG_EOI 0xb0 /* End of interrupt */
@@ -41,6 +42,21 @@ void lapic_eoi(void) {
 	lapic_write(LAPIC_REG_EOI, LAPIC_EOI_ACK);
 }
 
+uint64_t freq = 0;
+
+void lapic_oneshot(uint64_t us, uint8_t vector) {
+	bool old_int_state = interrupt_toggle(false);
+	lapic_timer_stop();
+
+    uint64_t ticks = us * (freq / 1000000);
+
+    lapic_write(LAPIC_REG_LVT_TIMER, vector);
+    lapic_write(LAPIC_REG_TIMER_DIV, 0);
+    lapic_write(LAPIC_REG_TIMER_INITCNT, ticks);
+
+    interrupt_toggle(old_int_state);
+}
+
 void lapic_timer_calibrate(void) {
 	lapic_timer_stop();
 
@@ -58,6 +74,8 @@ void lapic_timer_calibrate(void) {
 
 	uint16_t final_tick = get_pit_count();
 	uint64_t total_ticks = initial_tick - final_tick;
+
+	freq = (samples / total_ticks) * PIT_DIVIDEND;
 
 	// TODO: Set lapic_freq
 

@@ -53,3 +53,27 @@ typedef struct cpu_info {
 } cpu_info_t;
 
 extern uint32_t bsp_lapic_id;
+
+static inline bool interrupt_state(void) {
+    uint64_t flags;
+    asm volatile ("pushfq; pop %0" : "=rm"(flags) :: "memory");
+    return flags & (1 << 9);
+}
+
+static inline void enable_interrupts(void) {
+    asm ("sti");
+}
+
+static inline void disable_interrupts(void) {
+    asm ("cli");
+}
+
+static inline bool interrupt_toggle(bool state) {
+    bool ret = interrupt_state();
+    if (state) {
+        enable_interrupts();
+    } else {
+        disable_interrupts();
+    }
+    return ret;
+}

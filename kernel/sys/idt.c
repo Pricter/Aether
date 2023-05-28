@@ -12,6 +12,7 @@
 #include <kernel/symbols.h>
 #include <kernel/spinlock.h>
 #include <kernel/symbols.h>
+#include <kernel/mmu.h>
 
 static struct idt_pointer idtp;
 static idt_entry_t idt[256];
@@ -45,6 +46,8 @@ uint8_t idt_allocate(void) {
 	spinlock_release(&lock);
 	return ret;
 }
+
+irq_t *irqs = NULL;
 
 /**
  * @brief Initializes the IDT and sets up gates for all interrupts.
@@ -91,6 +94,8 @@ void idt_init(void) {
 	idt_set_gate(128, _isr128, 0x08, 0x8E, 1); /* Legacy system call entry point, called by userspace. */
 
 	idt_reload();
+
+	irqs = malloc(sizeof(irq_t) * IRQ_COUNT);
 }
 
 void idt_reload(void) {
@@ -150,18 +155,21 @@ static void panic(const char* desc, struct regs* r) {
 	fatal();
 }
 
+void irq_install(irq_t irq, int index) {
+	irqs[index - 32] = irq;
+	kdprintf("irq: Install IRQ %d to %p\n", index - 32, irqs[index - 32]);
+}
+
 static void _exception(struct regs* r, const char* description) {
 	if((r->cs & 0x3) == 0) {
 	 	panic(description, r);
 	}
 }
 
-irq_t irqs[IRQ_COUNT] = {0};
-
 static void _handle_irq(struct regs* r, int irqIndex) {
 	irq_t handler = irqs[irqIndex];
 	if(!handler) {
-		panic("Received IRQ without a handler", r);
+		panic("Received IRQ without handler", r);
 	}
 	handler();
 }

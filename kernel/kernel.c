@@ -11,7 +11,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/version.h>
-#include <kernel/acpi.h>
+#include <kernel/apic.h>
 
 extern void debug_printf_init(void);
 extern void gdt_init(void);
@@ -25,8 +25,6 @@ extern void cpuinfo_init(void);
 extern void acpi_init(void);
 extern void pit_init(void);
 
-extern uint64_t bytesOfBitmap;
-
 /**
  * The kernel start function. The kernel begins executing from
  * this function, this is called by the limine bootloader.
@@ -36,14 +34,14 @@ extern uint64_t bytesOfBitmap;
 void _start(void) {
 	debug_printf_init();
 
+	/* Initialize memory */
+    mmu_init();
+
 	/* Initialize gdt */
 	gdt_init();
 	
 	/* Setup isrs */
     idt_init();
-
-	/* Initialize memory */
-    mmu_init();
 
 	/* Initialize the slab allocator */
 	slab_init();
@@ -77,6 +75,8 @@ void _start(void) {
 
 	/* PIT System Clock */
 	pit_init();
+
+	lapic_oneshot(10000, 32);
 
     // We are done. Hang up
     asm ("cli");
