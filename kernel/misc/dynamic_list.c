@@ -47,3 +47,13 @@ void dlist_push_front(dlist_node_t* head, void* item) {
 	}
 	head->next = new;
 }
+
+uint64_t dlist_length(dlist_node_t* head) {
+	uint64_t length = 0;
+	dlist_node_t* current = head;
+	while(current->next != NULL) {
+		length++;
+		current = current->next;
+	}
+	return length;
+}
