@@ -12,6 +12,7 @@
 #include <kernel/kprintf.h>
 #include <kernel/version.h>
 #include <kernel/apic.h>
+#include <kernel/cpu.h>
 
 extern void debug_printf_init(void);
 extern void gdt_init(void);
@@ -69,14 +70,15 @@ void _start(void) {
 
 	/* Initialize kernel symbols */
 	symbols_init();
-	
+
 	/* Load the CPU information */
 	cpuinfo_init();
 
 	/* PIT System Clock */
 	pit_init();
 
-	lapic_oneshot(10000, 32);
+	/* Turn on hardware interrupts */
+	enable_interrupts();
 
     // We are done. Hang up
     asm ("cli");

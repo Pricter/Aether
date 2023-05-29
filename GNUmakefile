@@ -3,7 +3,7 @@ ISO_NAME = jeff
 .PHONY: all
 all: $(ISO_NAME).iso
 
-EMU_ARGS = -M q35 -m 2G -boot d -D qlog.txt -d int -no-reboot -smp 4 -serial stdio
+EMU_ARGS = -M q35 -m 2G -boot d -D qlog.txt -d int -no-reboot -smp 4 -serial stdio -monitor telnet:localhost:1234,server,nowait
 
 .PHONY: run run-uefi run-hdd run-hdd-uefi
 run: $(ISO_NAME).iso
@@ -16,6 +16,10 @@ limine:
 .PHONY: kernel
 kernel:
 	$(MAKE) -C kernel
+
+.PHONY: docs
+docs:
+	doxygen
 
 base.img:
 	dd if=/dev/zero of=base.img bs=1M count=10
@@ -42,6 +46,7 @@ $(ISO_NAME).iso: limine kernel base.img
 .PHONY: clean
 clean:
 	rm -rf iso_root $(ISO_NAME).iso base.img
+	rm -rf documentation
 	$(MAKE) -C kernel clean
 	rm qlog.txt
 
