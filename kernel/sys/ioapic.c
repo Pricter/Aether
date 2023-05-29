@@ -5,6 +5,7 @@
 #include <kernel/acpi.h>
 #include <kernel/apic.h>
 #include <kernel/dlist.h>
+#include <kernel/kprintf.h>
 
 uint32_t ioapic_read(struct madt_ioapic* ioapic, uint32_t reg) {
 	/* To read something we have to put the register index in IOREGSEL */
@@ -69,7 +70,7 @@ void ioapic_set_gsi_redirect(uint32_t lapic_id, uint8_t vector, uint8_t gsi,
 
     redirect |= (uint64_t)lapic_id << 56;
 
-    uint32_t ioredirect_table = (gsi - ioapic->systemIntBase) * 2 + 16;
+    uint32_t ioredirect_table = 0x10 + (gsi * 2);
     ioapic_write(ioapic, ioredirect_table, (uint32_t)redirect);
     ioapic_write(ioapic, ioredirect_table + 1, (uint32_t)(redirect >> 32));
 }

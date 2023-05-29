@@ -178,7 +178,6 @@ static void _handle_irq(struct regs* r, int irqIndex) {
 #define IRQ(i) case i: _handle_irq(r, i - 32); break;
 
 struct regs* isr_handler_inner(struct regs* r) {
-	kdprintf("idt: Received interrupt on %lu at address %p\n", r->int_no, r->rip);
 	switch (r->int_no) {
 		EXC(0, "divide-by-zero")
 		EXC(3, "breakpoint") /* TODO: map to ptrace event */

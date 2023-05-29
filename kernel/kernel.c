@@ -13,6 +13,7 @@
 #include <kernel/version.h>
 #include <kernel/apic.h>
 #include <kernel/cpu.h>
+#include <kernel/pit.h>
 
 extern void debug_printf_init(void);
 extern void gdt_init(void);
@@ -81,6 +82,5 @@ void _start(void) {
 	enable_interrupts();
 
     // We are done. Hang up
-    asm ("cli");
     for(;;) asm ("hlt");
 }

@@ -70,7 +70,7 @@ void acpi_init(void) {
 	kprintf("acpi: Using XSDT? %s\n", using_xsdt() ? "true" : "false");
 	kdprintf("acpi: System Descriptor Table: %p\n", rsdt);
 	kdprintf("acpi: SDT Sig: \"");
-	for(int i = 0; i < 4; i++) kprintf("%c", rsdt->hdr.sig[i]);
+	for(int i = 0; i < 4; i++) kdprintf("%c", rsdt->hdr.sig[i]);
 	kdprintf("\"\n");
 
 	struct madt* madt = (struct madt*)acpi_find_table("APIC");
@@ -101,7 +101,9 @@ void acpi_init(void) {
 			DLIST_PUSH_BACK(madt_ioapic, (struct madt_ioapic*)header);
 			break;
 		case 2:
-			kdprintf("acpi: Found IOAPIC source override #%lu\n", DLIST_LENGTH(madt_ioapic_so));
+			kdprintf("acpi: Found IOAPIC source override #%lu, IRQ #%lu -> #%lu\n",
+				DLIST_LENGTH(madt_ioapic_so), ((struct madt_ioapic_so*)header)->irqSource,
+				((struct madt_ioapic_so*)header)->gsi);
 			DLIST_PUSH_BACK(madt_ioapic_so, (struct madt_ioapic_so*)header);
 			break;
 		case 3:
