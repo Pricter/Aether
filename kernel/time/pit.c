@@ -5,6 +5,7 @@
 #include <kernel/apic.h>
 #include <kernel/irq.h>
 #include <kernel/cpu.h>
+#include <kernel/time.h>
 
 void pit_reload_value(uint16_t value) {
 	/* Let PIT know that we are setting the reload value */
@@ -22,7 +23,7 @@ void pit_set_frequency(uint64_t frequency) {
 }
 
 void pit_timer_handler(void) {
-	kprintf("pit: irq received!\n");
+	__kernel_ticks++; /* A tick = 1000us */
 	lapic_eoi();
 }
 
