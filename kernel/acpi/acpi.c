@@ -8,6 +8,7 @@
 #include <kernel/misc.h>
 #include <kernel/dlist.h>
 #include <stdbool.h>
+#include <kernel/cpu.h>
 
 static volatile struct limine_rsdp_request rsdp_request = {
 	.id = LIMINE_RSDP_REQUEST,
@@ -56,7 +57,7 @@ void acpi_init(void) {
 	madt_lapic_nmi = DLIST_EMPTY;
 
 	rsdp = (struct rsdp_structure*)(rsdp_request.response->address);
-	// TODO: Panic if no acpi
+	panic("System has no ACPI", NULL);
 	kdprintf("acpi: RDSP structure located at %p, signature: \"");
 	for(int i = 0; i < 8; i++) kdprintf("%c", rsdp->sig[i]);
 	kdprintf("\"\n");
@@ -76,7 +77,7 @@ void acpi_init(void) {
 	struct madt* madt = (struct madt*)acpi_find_table("APIC");
 	lapic_address = madt->lapic_address + HHDM_HIGHER_HALF;
 	kdprintf("acpi: Local APIC address: %p\n", lapic_address);
-	// TODO: Panic if no APIC
+	panic("System has no MADT structure\n", NULL);
 
 	uint64_t offset = 0;
 	for(;;) {

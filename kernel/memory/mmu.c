@@ -11,6 +11,7 @@
 #include <limine.h>
 #include <memory.h>
 #include <kernel/kprintf.h>
+#include <kernel/cpu.h>
 
 /* Hangs the system */
 extern void fatal();

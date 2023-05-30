@@ -12,6 +12,7 @@
 #include <kernel/kprintf.h>
 #include <kernel/version.h>
 #include <kernel/cpu.h>
+#include <kernel/sched.h>
 
 extern void debug_printf_init(void);
 extern void gdt_init(void);
@@ -63,9 +64,6 @@ void _start(void) {
 		__kernel_build_time);
 
 	acpi_init();
-	
-	/* Initialize multicore */
-	smp_init();
 
 	/* Initialize kernel symbols */
 	symbols_init();
@@ -79,6 +77,8 @@ void _start(void) {
 	/* Turn on hardware interrupts */
 	enable_interrupts();
 
-    // We are done. Hang up
-    for(;;) asm ("hlt");
+	/* Initialize multicore */
+	smp_init();
+
+	sched_unreachable();
 }

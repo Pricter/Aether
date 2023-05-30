@@ -1,6 +1,6 @@
 #pragma once
 
-#include <kernel/regs.h>
+#include <kernel/cpu.h>
 #include <stdint.h>
 #include <stddef.h>
 

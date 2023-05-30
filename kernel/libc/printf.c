@@ -9,6 +9,7 @@
 #include <deps/printf.h>
 #include <kernel/spinlock.h>
 #include <kernel/ports.h>
+#include <kernel/cpu.h>
 
 spinlock_t printlock = SPINLOCK_ZERO;
 

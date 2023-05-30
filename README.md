@@ -47,6 +47,15 @@ Dont use the `partitions` (entries with a number at the end) for this
 $ dd if=jeff.iso of=/dev/sdx
 ```
 
+## TODO
+- [x] Memory management
+- [x] PIT Timer
+- [x] Doxygen
+- [ ] Proper documentation
+- [ ] PS2 Controller driver
+- [ ] PS2 Keyboard driver
+- [ ] PS2 Mouse driver
+
 ## Other notes:
 
 - The kernel crashes if there is not enough memory instead of using a page file

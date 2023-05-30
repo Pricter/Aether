@@ -41,3 +41,10 @@ char* strctrim(const char* s, char c) {
 	
 	return trimmed;
 }
+
+char* strdup(const char* s) {
+	size_t length = strlen(s) + 1;
+	char* new = (char*)malloc(length);
+	memcpy(new, s, length);
+	return new;
+}
