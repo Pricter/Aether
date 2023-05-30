@@ -6,13 +6,11 @@
 #include <kernel/apic.h>
 #include <kernel/irq.h>
 #include <kernel/acpi.h>
+#include <drivers/input/ps2_controller.h>
 
 #define PS2_DATA 0x60
 #define PS2_STATUS 0x64
 #define PS2_COMMAND 0x64
-
-#define PS2_CTRL_TPASS 0x55
-#define PS2_P1_TPASS 0x00
 
 uint8_t ps2_read_data() {
 	uint8_t resp = inportb(PS2_STATUS);
