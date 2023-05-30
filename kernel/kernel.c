@@ -25,6 +25,7 @@ extern void smp_init(void);
 extern void cpuinfo_init(void);
 extern void acpi_init(void);
 extern void pit_init(void);
+extern void ps2_controller_init(void);
 
 /**
  * The kernel start function. The kernel begins executing from
@@ -79,6 +80,9 @@ void _start(void) {
 
 	/* Initialize multicore */
 	smp_init();
+
+	/* TODO: Wrap up in a single dev_init() */
+	ps2_controller_init();
 
 	sched_unreachable();
 }

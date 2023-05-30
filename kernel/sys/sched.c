@@ -4,6 +4,5 @@
 #include <string.h>
 
 void sched_unreachable(void) {
-	asm ("cli");
 	for(;;) asm ("hlt");
 }

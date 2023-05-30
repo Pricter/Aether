@@ -151,6 +151,65 @@ struct madt_lapic_new {
 	uint64_t lapicAddress; /*!< New local APIC id */
 } __attribute__((packed));
 
+struct fadt {
+	uint8_t sig[4];
+	uint32_t length;
+	uint8_t fadtVersion;
+	uint8_t checksum;
+	uint8_t oemId[6];
+	uint8_t oemTableId[8];
+	uint32_t oemRevision;
+	uint8_t creatorId[4];
+	uint32_t creatorRevision;
+	uint32_t FIRMWARE_CTRL;
+	uint32_t DSDT;
+	uint8_t reserved0;
+	uint8_t Preferred_PM_Profile;
+	uint16_t SCI_INT;
+	uint32_t SMI_CMD;
+	uint8_t ACPI_ENABLE;
+	uint8_t ACPI_DISABLE;
+	uint8_t S4BIOS_REQ;
+	uint8_t PSTATE_CNT;
+	uint8_t PM1a_EVT_BLK[4];
+	uint8_t PM1b_EVT_BLK[4];
+	uint8_t PM1a_CNT_BLK[4];
+	uint8_t PM1b_CNT_BLK[4];
+	uint8_t PM2_CNT_BLK[4];
+	uint8_t PM_TMR_BLK[4];
+	uint8_t GPE0_BLK[4];
+	uint8_t GPE1_BLK[4];
+	uint8_t PM1_EVT_LEN;
+	uint8_t PM1_CNT_LEN;
+	uint8_t PM2_CNT_LEN;
+	uint8_t PM_TMR_LEN;
+	uint8_t GPE0_BLK_LEN;
+	uint8_t GPE1_BLK_LEN;
+	uint8_t GPE1_BASE;
+	uint8_t CST_CNT;
+	uint16_t P_LVL2_LAT;
+	uint16_t P_LVL3_LAT;
+	uint16_t FLUSH_SIZE;
+	uint16_t FLUSH_STRIDE;
+	uint8_t DUTY_OFFSET;
+	uint8_t DUTY_WIDTH;
+	uint8_t DAY_ALRM;
+	uint8_t MON_ALRM;
+	uint8_t CENTURY;
+	uint16_t IAPC_BOOT_ARCH;
+	uint8_t reserved1;
+	uint32_t flags;
+	uint8_t RESET_REG[12];
+	uint8_t RESET_VALUE;
+	uint16_t ARM_BOOT_ARCH;
+	uint8_t FADTMinorVersion;
+	uint64_t X_FIRMWARE_CTRL;
+	uint64_t X_DSDT;
+	/* TODO: More fields */
+} __attribute__((packed));
+
+extern struct fadt *fadt;
+
 extern dlist_node_t* madt_lapic;
 extern dlist_node_t* madt_ioapic;
 extern dlist_node_t* madt_ioapic_so;

@@ -37,6 +37,7 @@ extern struct regs *_isr29(struct regs*);
 extern struct regs *_isr30(struct regs*);
 extern struct regs *_isr31(struct regs*);
 extern struct regs *_isr32(struct regs*); /* Timer interrupt */
+extern struct regs *_isr33(struct regs*); /* PS2 Keyboard interrupt */
 extern struct regs *_isr128(struct regs*); /* Syscall */
 
 typedef struct regs * (*interrupt_handler_t)(struct regs *);

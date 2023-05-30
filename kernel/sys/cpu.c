@@ -17,7 +17,7 @@ spinlock_t paniclock = SPINLOCK_ZERO;
 void panic(const char* desc, struct regs* r) {
 	spinlock_acquire(&paniclock);
 
-	kprintf("\nJeff kernel panic! (%s)n", desc);
+	kprintf("\nJeff kernel panic! (%s)\n", desc);
 
 	if(r == NULL) goto _done;
 

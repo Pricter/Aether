@@ -49,6 +49,8 @@ struct acpi_common_header* acpi_find_table(char t_sig[static 4]) {
 	return NULL;
 }
 
+struct fadt *fadt = NULL;
+
 void acpi_init(void) {
 	madt_lapic = DLIST_EMPTY;
 	madt_ioapic = DLIST_EMPTY;
@@ -56,8 +58,8 @@ void acpi_init(void) {
 	madt_ioapic_nmi = DLIST_EMPTY;
 	madt_lapic_nmi = DLIST_EMPTY;
 
+	if(rsdp_request.response->address == NULL) panic("System has no ACPI", NULL);
 	rsdp = (struct rsdp_structure*)(rsdp_request.response->address);
-	panic("System has no ACPI", NULL);
 	kdprintf("acpi: RDSP structure located at %p, signature: \"");
 	for(int i = 0; i < 8; i++) kdprintf("%c", rsdp->sig[i]);
 	kdprintf("\"\n");
@@ -77,7 +79,7 @@ void acpi_init(void) {
 	struct madt* madt = (struct madt*)acpi_find_table("APIC");
 	lapic_address = madt->lapic_address + HHDM_HIGHER_HALF;
 	kdprintf("acpi: Local APIC address: %p\n", lapic_address);
-	panic("System has no MADT structure\n", NULL);
+	if(madt == NULL) panic("System has no MADT structure\n", NULL);
 
 	uint64_t offset = 0;
 	for(;;) {
@@ -122,4 +124,6 @@ void acpi_init(void) {
 
 		offset += MAX(header->length, 2);
 	}
+
+	fadt = (struct fadt*)acpi_find_table("FACP");
 }
