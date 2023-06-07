@@ -2,10 +2,11 @@
 
 #include <stdint.h>
 #include <kernel/ports.h>
+#include <kernel/pit.h>
 
-#define PIT_CHANNEL1 0x40
-#define PIT_CHANNEL2 0x41
-#define PIT_CHANNEL3 0x42
+#define PIT_CHANNEL0 0x40
+#define PIT_CHANNEL1 0x41
+#define PIT_CHANNEL2 0x42
 #define PIT_CONTROL 0x43
 
 #define TIMER_FREQ 1000
@@ -26,3 +27,5 @@ static inline uint16_t get_pit_count(void) {
 	/* Convert them to a single 16bit count */
 	return ((uint64_t)hi << 8) | lo;
 }
+
+void play_sound(uint32_t frequency, uint32_t millis);

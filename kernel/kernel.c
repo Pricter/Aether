@@ -13,6 +13,8 @@
 #include <kernel/version.h>
 #include <kernel/cpu.h>
 #include <kernel/sched.h>
+#include <kernel/pit.h>
+#include <kernel/time.h>
 
 extern void debug_printf_init(void);
 extern void gdt_init(void);
@@ -81,7 +83,7 @@ void _start(void) {
 	/* Initialize multicore */
 	smp_init();
 
-	/* TODO: Wrap up in a single dev_init() */
+	/* TODO: Wrap up in a single ps2dev_init() */
 	ps2_controller_init();
 
 	sched_unreachable();
