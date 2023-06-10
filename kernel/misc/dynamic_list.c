@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include <kernel/mmu.h>
 #include <kernel/dlist.h>
 #include <kernel/kprintf.h>
@@ -56,4 +57,20 @@ uint64_t dlist_length(dlist_node_t* head) {
 		current = current->next;
 	}
 	return length;
+}
+
+void dlist_remove_item(dlist_node_t* head, void* item) {
+	dlist_node_t* current = head;
+	bool found = false;
+	while(current->next != NULL) {
+		if(current->item == item) {
+			found = true;
+			break;
+		}
+		current = current->next;
+	}
+	if(!found) return;
+	current->next->previous = current->previous;
+	current->previous->next = current->next;
+	free(current);
 }

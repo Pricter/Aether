@@ -55,6 +55,7 @@ $ dd if=jeff.iso of=/dev/sdx
 - [x] PS2 Controller driver
 - [ ] PS2 Keyboard driver
 - [ ] PS2 Mouse driver
+- [ ] Scheduler
 
 ## Other notes:
 
@@ -62,3 +63,4 @@ $ dd if=jeff.iso of=/dev/sdx
 - The kernel finds the functions defined itself by using the kernel_file feature
 - Using make run causes qemu to start a monitor on a telnet server to open the monitor
 use `telnet localhost 1234` in a shell
+- FIXME: PIT timer is interrupting every 50ms instead of 1ms

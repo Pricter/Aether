@@ -6,6 +6,7 @@
 #include <kernel/irq.h>
 #include <kernel/cpu.h>
 #include <kernel/time.h>
+#include <kernel/sched.h>
 
 void pit_reload_value(uint16_t value) {
 	/* 0x34 = 0b00110100, channel 0, lobyte/hibyte, rate generator */
@@ -20,12 +21,11 @@ void pit_set_frequency(uint64_t frequency) {
 	uint64_t divisor = PIT_DIVIDEND / frequency;
 	if((PIT_DIVIDEND & frequency) > (frequency / 2)) divisor++;
 	pit_reload_value((uint16_t)divisor);
-	kprintf("%lu\n", divisor);
 }
 
-void pit_timer_handler(void) {
-	__kernel_ticks++; /* A tick = 1000us */
-	lapic_eoi();
+void pit_timer_handler(struct regs* r) {
+	__kernel_ticks++; /* A tick = 1ms FIXME: Its now 50ms */
+	schedule_threads(r);
 }
 
 void pit_init(void) {
@@ -40,21 +40,4 @@ void pit_init(void) {
 
 	kdprintf("pit: Set system clock frequency to %luhz or %luus\n", TIMER_FREQ,
 		1000000 / TIMER_FREQ);
-}
-
-void pit_play_sound(uint32_t frequency, uint32_t millis) {
-	uint32_t div;
-	uint8_t tmp;
-
-	pit_set_frequency(frequency);
-
-	tmp = inportb(0x61);
-	if(tmp != (tmp | 3)) {
-		outportb(0x61, tmp | 3);
-	}
-
-	sleep(millis);
-
-	tmp = inportb(0x61) & 0xFC;
-	outportb(0x61, tmp);
 }

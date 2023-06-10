@@ -12,6 +12,7 @@
 extern void lapic_init(void);
 
 uint32_t bsp_lapic_id = 0;
+uint64_t coreCount = 0;
 
 /* Request limine for all cores information */
 static volatile struct limine_smp_request smp_request = {
@@ -61,13 +62,15 @@ void smp_init(void) {
 	struct limine_smp_response *smp_response = smp_request.response;
 	struct limine_smp_info **cpu_cores = smp_response->cpus;
 
+	coreCount = smp_response->cpu_count;
+
 	/* Local array to keep track of the cores */
-	cpu_core_local = malloc(sizeof(core_t) * smp_response->cpu_count);
+	cpu_core_local = malloc(sizeof(core_t) * coreCount);
 
 	bsp_lapic_id = smp_response->bsp_lapic_id;
 
 	/* Loop through all the cores */
-	for(uint64_t i = 0; i < smp_response->cpu_count; i++) {
+	for(uint64_t i = 0; i < coreCount; i++) {
 		struct limine_smp_info* core = cpu_cores[i];
 
 		/* Get the core_t from cpu_core_local */
@@ -86,7 +89,7 @@ void smp_init(void) {
 	}
 
 	/* Safe guard, core 0 does not jump to core_start as it is already running */
-	while(initialized != smp_response->cpu_count - 1) {
+	while(initialized != (coreCount - 1)) {
 		asm ("pause");
 	}
 }

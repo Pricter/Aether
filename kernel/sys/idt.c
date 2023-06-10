@@ -122,7 +122,7 @@ static void _handle_irq(struct regs* r, int irqIndex) {
 	if(!handler) {
 		panic("Received IRQ without handler", r);
 	}
-	handler();
+	handler(r);
 }
 
 #define EXC(i, n) case i: _exception(r, n); break;

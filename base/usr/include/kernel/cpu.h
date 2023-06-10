@@ -4,6 +4,8 @@
 #include <kernel/mmu.h>
 #include <stdbool.h>
 
+extern uint64_t coreCount;
+
 static inline void halt() {
 	asm ("cli");
 	for(;;) asm ("hlt");
@@ -18,18 +20,6 @@ static inline uint64_t rdmsr(uint32_t msr) {
 		: "memory"
 	);
 	return ((uint64_t)edx << 32) | eax;
-}
-
-static inline uint64_t wrmsr(uint32_t msr, uint64_t val) {
-    uint32_t eax = (uint32_t)val;
-    uint32_t edx = (uint32_t)(val >> 32);
-    asm volatile (
-        "wrmsr\n\t"
-        :
-        : "a" (eax), "d" (edx), "c" (msr)
-        : "memory"
-    );
-    return ((uint64_t)edx << 32) | eax;
 }
 
 typedef struct core {
@@ -103,4 +93,23 @@ static void fatal(void) {
 			"hlt\n"
 		);
 	}
+}
+
+static inline struct thread_struct *get_gs_register(void) {
+    struct thread_struct *ret = NULL;
+    asm volatile ("mov %%gs:0x0, %0" : "=r" (ret));
+    return ret;
+}
+
+static inline void wrmsr(uint32_t msr, uint64_t value) {
+	uint32_t low = value & 0xFFFFFFFF;
+	uint32_t high = (value >> 32) & 0xFFFFFFFF;
+
+	asm volatile ("wrmsr" : : "c" (msr), "a" (low), "d" (high));
+}
+
+static inline void set_gs_register(struct thread_struct *thread) {
+    wrmsr(0xC0000101, (uint64_t)thread);
+	wrmsr(0xC0000102, (uint64_t)thread);
+	asm volatile ("swapgs");
 }

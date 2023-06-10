@@ -11,10 +11,8 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/version.h>
-#include <kernel/cpu.h>
 #include <kernel/sched.h>
-#include <kernel/pit.h>
-#include <kernel/time.h>
+#include <kernel/cpu.h>
 
 extern void debug_printf_init(void);
 extern void gdt_init(void);
@@ -28,6 +26,8 @@ extern void cpuinfo_init(void);
 extern void acpi_init(void);
 extern void pit_init(void);
 extern void ps2_controller_init(void);
+
+void kmain_func(void);
 
 /**
  * The kernel start function. The kernel begins executing from
@@ -86,5 +86,17 @@ void _start(void) {
 	/* TODO: Wrap up in a single ps2dev_init() */
 	ps2_controller_init();
 
+	sched_init();
+
+	struct thread_struct* kmain_thread = kernel_thread(kmain_func);
+	sched_add_thread(kmain_thread);
+	set_gs_register(kmain_thread);
+
 	sched_unreachable();
+}
+
+void kmain_func(void) {
+	kprintf("HERE\n");
+
+	for(;;);
 }
