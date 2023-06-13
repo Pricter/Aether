@@ -11,8 +11,8 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/version.h>
-#include <kernel/sched.h>
 #include <kernel/cpu.h>
+#include <kernel/mmu.h>
 
 extern void debug_printf_init(void);
 extern void gdt_init(void);
@@ -86,13 +86,7 @@ void _start(void) {
 	/* TODO: Wrap up in a single ps2dev_init() */
 	ps2_controller_init();
 
-	sched_init();
-
-	struct thread_struct* kmain_thread = kernel_thread(kmain_func);
-	sched_add_thread(kmain_thread);
-	set_gs_register(kmain_thread);
-
-	sched_unreachable();
+	for(;;);
 }
 
 void kmain_func(void) {

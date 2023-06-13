@@ -6,7 +6,6 @@
 #include <kernel/irq.h>
 #include <kernel/cpu.h>
 #include <kernel/time.h>
-#include <kernel/sched.h>
 
 void pit_reload_value(uint16_t value) {
 	/* 0x34 = 0b00110100, channel 0, lobyte/hibyte, rate generator */
@@ -25,7 +24,8 @@ void pit_set_frequency(uint64_t frequency) {
 
 void pit_timer_handler(struct regs* r) {
 	__kernel_ticks++; /* A tick = 1ms FIXME: Its now 50ms */
-	schedule_threads(r);
+	lapic_eoi();
+	disable_interrupts();
 }
 
 void pit_init(void) {

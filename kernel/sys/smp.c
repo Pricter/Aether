@@ -7,7 +7,6 @@
 #include <kernel/gdt.h>
 #include <kernel/irq.h>
 #include <kernel/apic.h>
-#include <kernel/sched.h>
 
 extern void lapic_init(void);
 
@@ -55,7 +54,7 @@ void core_start(struct limine_smp_info *core) {
 	initialized++;
 
 	/* Exiting from this causes a triple fault */
-	if(!core_local->bsp) sched_unreachable();
+	if(!core_local->bsp) for(;;);
 }
 
 void smp_init(void) {

@@ -41,6 +41,11 @@ struct flanterm_context* context = NULL;
 
 #define COM1 0x3F8
 
+void _wrap_free(void* pointer, uint64_t size) {
+	(void)size;
+	free(pointer);
+}
+
 /* Initialize flanterm */
 void printf_init(void) {
 	/* Set the first framebuffer */
@@ -57,9 +62,9 @@ void printf_init(void) {
 
 	/* Initialize flanterm context */
 	context = flanterm_fb_init(
-		malloc,
+		malloc, _wrap_free,
 		framebuffer->address, framebuffer->width, framebuffer->height,
-		framebuffer->pitch, NULL, NULL, NULL, &default_bg_black, &default_fg_yellow, NULL, NULL, NULL, 0, 0, 0, 1, 1, 0);
+		framebuffer->pitch, NULL, NULL, &default_bg_black, &default_fg_yellow, NULL, NULL, NULL, 8, 16, 1, 1, 1, 0);
 	
 	/* We dont want the ugly block cursor */
 	context->cursor_enabled = false;

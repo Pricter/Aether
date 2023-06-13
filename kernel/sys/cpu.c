@@ -33,14 +33,11 @@ void panic(const char* desc, struct regs* r) {
 		r->r12, r->r13, r->r14, r->r15);
 	kprintf("  cs=0x%016lx ss=0x%016lx rflags=0x%016lx int=0x%02lx err=0x%02lx\n",
 		r->cs, r->ss, r->rflags, r->int_no, r->err_code);
-	
-	uint32_t gs_base_low, gs_base_high;
-	asm volatile ( "rdmsr" : "=a" (gs_base_low), "=d" (gs_base_high): "c" (0xc0000101) );
-	uint32_t kgs_base_low, kgs_base_high;
-	asm volatile ( "rdmsr" : "=a" (kgs_base_low), "=d" (kgs_base_high): "c" (0xc0000102) );
-	kprintf("  gs=0x%08x%08x kgs=0x%08x%08x\n",
-		gs_base_high, gs_base_low, kgs_base_high, kgs_base_low);
-	
+	kprintf("  gs=0x%016lx kgs=0x%016lx\n",
+		rdmsr(0xc0000101), rdmsr(0xc0000102));
+	kprintf("  cr0=0x%016lx cr2=0x%016lx cr3=0x%016lx cr4=0x%016lx\n",
+		read_cr0(), read_cr2(), read_cr3(), read_cr4());
+
 	stacktrace();
 
 	goto _done;

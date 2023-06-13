@@ -16,9 +16,17 @@ EMU_ARGS += -audiodev pa,id=snd0 -machine pcspk-audiodev=snd0
 run: $(ISO_NAME).iso
 	qemu-system-x86_64 $(EMU_ARGS) -cdrom $(ISO_NAME).iso 
 
+.PHONY: run-uefi
+run-uefi: ovmf $(ISO_NAME).iso
+	qemu-system-x86_64 $(EMU_ARGS) -bios ovmf/OVMF.fd -cdrom $(ISO_NAME).iso -boot d
+
 limine:
 	git clone https://github.com/limine-bootloader/limine.git --branch=v4.x-branch-binary --depth=1
 	$(MAKE) -C limine
+
+ovmf:
+	mkdir -p ovmf
+	cd ovmf && curl -Lo OVMF-X64.zip https://efi.akeo.ie/OVMF/OVMF-X64.zip && unzip OVMF-X64.zip
 
 .PHONY: kernel
 kernel:

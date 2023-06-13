@@ -11,6 +11,30 @@ static inline void halt() {
 	for(;;) asm ("hlt");
 }
 
+static inline uint64_t read_cr0() {
+    uint64_t cr0_value;
+    asm volatile("mov %%cr0, %0" : "=r" (cr0_value));
+    return cr0_value;
+}
+
+static inline uint64_t read_cr2() {
+    uint64_t cr2_value;
+    asm volatile("mov %%cr2, %0" : "=r" (cr2_value));
+    return cr2_value;
+}
+
+static inline uint64_t read_cr3() {
+    uint64_t cr3_value;
+    asm volatile("mov %%cr3, %0" : "=r" (cr3_value));
+    return cr3_value;
+}
+
+static inline uint64_t read_cr4() {
+    uint64_t cr4_value;
+    asm volatile("mov %%cr4, %0" : "=r" (cr4_value));
+    return cr4_value;
+}
+
 static inline uint64_t rdmsr(uint32_t msr) {
 	uint32_t edx = 0, eax = 0;
 	asm volatile (
