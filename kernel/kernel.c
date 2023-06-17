@@ -36,7 +36,8 @@ void kmain_func(void);
  * It prints the kernel information and initializes the kernel
 */
 void _start(void) {
-	debug_printf_init();
+	/* Initialize printf */
+	printf_init();
 
 	/* Initialize memory */
     mmu_init();
@@ -50,9 +51,6 @@ void _start(void) {
 	/* Initialize the slab allocator */
 	slab_init();
 
-	/* Initialize printf */
-	printf_init();
-
 	/* Print kernel info */
 	kprintf("%s %d.%d.%d-%s running on %s\n",
         __kernel_name,
@@ -61,7 +59,7 @@ void _start(void) {
         __kernel_version_lower,
         __kernel_version_suffix,
         __kernel_arch);
-	kdprintf("Kernel compiled by \"%s\" on \"%s %s\"\n",
+	kprintf("Kernel compiled by \"%s\" on \"%s %s\"\n",
 		__kernel_compiler_version,
 		__kernel_build_date,
 		__kernel_build_time);

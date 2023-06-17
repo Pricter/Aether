@@ -46,13 +46,7 @@ char* memmap_strings[8] = {
     "MEMMAP_FRAMEBUFFER            ",
 };
 
-/* Largest free memory segment */
-static uintptr_t highest_free_address = 0;
-
-/* The size of the largest free memory segment */
-static uint64_t highest_free_address_size = 0;
-
-/* Any free memory segment that can fit our bitmap, can also be highest_free_address */
+/* Any free memory segment that can fit our bitmap */
 static uintptr_t free_segment_bitmap = 0;
 
 /* Total system memory size */
@@ -327,20 +321,9 @@ void mmu_init(void) {
     }
 
     struct limine_memmap_entry** entries = response->entries;
-	kdprintf("Format: start-end length\n");
-    /* Find the largest free memory segment */
+
     for(uint64_t i = 0; i < response->entry_count; i++) {
         struct limine_memmap_entry* entry = entries[i];
-		kdprintf("Memmap entry: %p - %p %lu\n",
-			entry->base, entry->base + entry->length, entry->length);
-
-        /* Check if the entry is usable and larger and the previous entry */
-        if(entry->type == LIMINE_MEMMAP_USABLE &&
-           entry->length > highest_free_address_size)
-        {
-            highest_free_address = entry->base;
-            highest_free_address_size = entry->length;
-        }
 
         /* Add the entry length to the total memory */
         total_memory += entry->length;
@@ -386,8 +369,12 @@ void mmu_init(void) {
                 /* Clear the frame */
                 mmu_frame_clear(j);
             }
-        }
+        } else {
+			usedMemory += entry->length;
+		}
     }
+
+	kprintf("Free memory: %lu\n", freeMemory);
 
 	/* Set out bitmap to used pages */
 	uint64_t bitmapPages = bytesOfBitmap / 4096;
@@ -444,11 +431,11 @@ void mmu_init(void) {
 	*/
 	mmu_switch_pagemap(mmu_kernel_pagemap);
 
-	kdprintf("mmu: Global pml at %p\n", mmu_kernel_pagemap);
-	kdprintf("mmu: Bitmap size: %lu bytes, %lu pages\n", bytesOfBitmap, bitmapPages);
-	kdprintf("mmu: Kernel sections:\n");
-	kdprintf("         text: %p - %p %lu\n", text_start, text_end, text_end - text_start);
-	kdprintf("       rodata: %p - %p %lu\n", rodata_start, rodata_end, rodata_end - rodata_start);
-	kdprintf("         data: %p - %p %lu\n", data_start, data_end, data_end - data_start);
-	kdprintf("mmu: Mapped all memory to hhdm. Identity mapped bitmap\n");
+	kprintf("mmu: Global pml at %p\n", mmu_kernel_pagemap);
+	kprintf("mmu: Bitmap size: %lu bytes, %lu pages\n", bytesOfBitmap, bitmapPages);
+	kprintf("mmu: Kernel sections:\n");
+	kprintf("         text: %p - %p %lu\n", text_start, text_end, text_end - text_start);
+	kprintf("       rodata: %p - %p %lu\n", rodata_start, rodata_end, rodata_end - rodata_start);
+	kprintf("         data: %p - %p %lu\n", data_start, data_end, data_end - data_start);
+	kprintf("mmu: Mapped all memory to hhdm. Identity mapped bitmap\n");
 }

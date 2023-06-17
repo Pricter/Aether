@@ -33,11 +33,11 @@ void pit_init(void) {
 	pit_set_frequency(TIMER_FREQ);
 
 	uint8_t timer_vector = idt_allocate();
-	kdprintf("pit: Timer vector: %d\n", timer_vector);
+	kprintf("pit: Timer vector: %d\n", timer_vector);
 
 	irq_install(pit_timer_handler, timer_vector);
 	ioapic_irq_redirect(bsp_lapic_id, timer_vector, 0, true);
 
-	kdprintf("pit: Set system clock frequency to %luhz or %luus\n", TIMER_FREQ,
+	kprintf("pit: Set system clock frequency to %luhz or %luus\n", TIMER_FREQ,
 		1000000 / TIMER_FREQ);
 }

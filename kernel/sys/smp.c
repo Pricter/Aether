@@ -48,7 +48,7 @@ void core_start(struct limine_smp_info *core) {
 	lapic_init();
 	spinlock_release(&lock);
 
-	kdprintf("smp: Processor #%ld online\n", core_local->core_number);
+	kprintf("smp: Processor #%ld online\n", core_local->core_number);
 
 	/* Add the initialized statement */
 	initialized++;

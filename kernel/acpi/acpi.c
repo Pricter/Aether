@@ -60,9 +60,9 @@ void acpi_init(void) {
 
 	if(rsdp_request.response->address == NULL) panic("System has no ACPI", NULL);
 	rsdp = (struct rsdp_structure*)(rsdp_request.response->address);
-	kdprintf("acpi: RDSP structure located at %p, signature: \"");
-	for(int i = 0; i < 8; i++) kdprintf("%c", rsdp->sig[i]);
-	kdprintf("\"\n");
+	kprintf("acpi: RDSP structure located at %p, signature: \"");
+	for(int i = 0; i < 8; i++) kprintf("%c", rsdp->sig[i]);
+	kprintf("\"\n");
 
 	if(using_xsdt()) {
 		rsdt = (struct rsdt*)(rsdp->xsdtAddr + HHDM_HIGHER_HALF);
@@ -71,14 +71,14 @@ void acpi_init(void) {
 	}
 
 	kprintf("acpi: Using XSDT? %s\n", using_xsdt() ? "true" : "false");
-	kdprintf("acpi: System Descriptor Table: %p\n", rsdt);
-	kdprintf("acpi: SDT Sig: \"");
-	for(int i = 0; i < 4; i++) kdprintf("%c", rsdt->hdr.sig[i]);
-	kdprintf("\"\n");
+	kprintf("acpi: System Descriptor Table: %p\n", rsdt);
+	kprintf("acpi: SDT Sig: \"");
+	for(int i = 0; i < 4; i++) kprintf("%c", rsdt->hdr.sig[i]);
+	kprintf("\"\n");
 
 	struct madt* madt = (struct madt*)acpi_find_table("APIC");
 	lapic_address = madt->lapic_address + HHDM_HIGHER_HALF;
-	kdprintf("acpi: Local APIC address: %p\n", lapic_address);
+	kprintf("acpi: Local APIC address: %p\n", lapic_address);
 	if(madt == NULL) panic("System has no MADT structure\n", NULL);
 
 	uint64_t offset = 0;
@@ -93,33 +93,33 @@ void acpi_init(void) {
 		case 0:
 			bool enabled = ((struct madt_lapic*)header)->flags & 1;
 			bool online_capable = (((struct madt_lapic*)header)->flags >> 1) & 1;
-			kdprintf("acpi: Found local APIC #%d, { enabled: %s, online-capable: %s }\n",
+			kprintf("acpi: Found local APIC #%d, { enabled: %s, online-capable: %s }\n",
 				DLIST_LENGTH(madt_lapic),
 				enabled ? "true" : "false", online_capable ? "true" : "false");
 			DLIST_PUSH_BACK(madt_lapic, (struct madt_lapic*)header);
 			break;
 		case 1:
-			kdprintf("acpi: Found IOAPIC #%d at %p\n", DLIST_LENGTH(madt_ioapic),
+			kprintf("acpi: Found IOAPIC #%d at %p\n", DLIST_LENGTH(madt_ioapic),
 				((struct madt_ioapic*)header)->ioAPICAddress + HHDM_HIGHER_HALF);
 			DLIST_PUSH_BACK(madt_ioapic, (struct madt_ioapic*)header);
 			break;
 		case 2:
-			kdprintf("acpi: Found IOAPIC source override #%lu, IRQ #%lu -> #%lu\n",
+			kprintf("acpi: Found IOAPIC source override #%lu, IRQ #%lu -> #%lu\n",
 				DLIST_LENGTH(madt_ioapic_so), ((struct madt_ioapic_so*)header)->irqSource,
 				((struct madt_ioapic_so*)header)->gsi);
 			DLIST_PUSH_BACK(madt_ioapic_so, (struct madt_ioapic_so*)header);
 			break;
 		case 3:
-			kdprintf("acpi: Found IOAPIC NMI #%lu\n", DLIST_LENGTH(madt_ioapic_nmi));
+			kprintf("acpi: Found IOAPIC NMI #%lu\n", DLIST_LENGTH(madt_ioapic_nmi));
 			DLIST_PUSH_BACK(madt_ioapic_nmi, (struct madt_ioapic_nmi*)header);
 			break;
 		case 4:
-			kdprintf("acpi: Found local APIC NMI #%lu\n", DLIST_LENGTH(madt_lapic_nmi));
+			kprintf("acpi: Found local APIC NMI #%lu\n", DLIST_LENGTH(madt_lapic_nmi));
 			DLIST_PUSH_BACK(madt_lapic_nmi, (struct madt_lapic_nmi*)header);
 			break;
 		case 5:
 			lapic_address = ((struct madt_lapic_new*)header)->lapicAddress + HHDM_HIGHER_HALF;
-			kdprintf("acpi: Found new local APIC address at %p\n", lapic_address);
+			kprintf("acpi: Found new local APIC address at %p\n", lapic_address);
 		}
 
 		offset += MAX(header->length, 2);

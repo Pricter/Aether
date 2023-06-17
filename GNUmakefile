@@ -9,9 +9,6 @@ EMU_ARGS  = -M q35 -m 2G -boot d -D qlog.txt -d int -no-reboot -smp 4
 # Host-related
 EMU_ARGS += -serial stdio -monitor telnet:localhost:1234,server,nowait
 
-# Audio
-EMU_ARGS += -audiodev pa,id=snd0 -machine pcspk-audiodev=snd0
-
 .PHONY: run run-uefi run-hdd run-hdd-uefi
 run: $(ISO_NAME).iso
 	qemu-system-x86_64 $(EMU_ARGS) -cdrom $(ISO_NAME).iso 

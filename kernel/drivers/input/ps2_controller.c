@@ -51,10 +51,10 @@ void ps2_controller_init(void) {
 	uint8_t config = ps2_write_command(0x20, true);
 	if(!(config & (1 << 4))) {
 		dual_channel = true;
-		kdprintf("ps2: Using a dual channel controller, config byte: 0x%x\n", config);
+		kprintf("ps2: Using a dual channel controller, config byte: 0x%x\n", config);
 	} else {
 		dual_channel = false;
-		kdprintf("ps2: Using a single channel controller, config byte: 0x%x\n", config);
+		kprintf("ps2: Using a single channel controller, config byte: 0x%x\n", config);
 	}
 
 	/* Disable IRQs 0, 1 and translation */
@@ -99,6 +99,6 @@ void ps2_controller_init(void) {
 	config |= (dual_channel ? 0x03 : 0x01);
 	ps2_write_command(0x60, false);
 	ps2_write_data(config);
-	kdprintf("ps2: Config byte: 0b%b\n", ps2_write_command(0x20, true));
-	kdprintf("ps2: Initialized the ps2 controller\n");
+	kprintf("ps2: Config byte: 0b%b\n", ps2_write_command(0x20, true));
+	kprintf("ps2: Initialized the ps2 controller\n");
 }

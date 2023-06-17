@@ -83,7 +83,7 @@ void symbols_init(void) {
 		}
 	}
 
-	kdprintf("symbols: Found %lu functions in kernel\n", function_count);
+	kprintf("symbols: Found %lu functions in kernel\n", function_count);
 }
 
 /**

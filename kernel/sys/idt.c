@@ -108,7 +108,7 @@ void idt_reload(void) {
 
 void irq_install(irq_t irq, int index) {
 	irqs[index - 32] = irq;
-	kdprintf("irq: Install IRQ %d to %p\n", index - 32, irqs[index - 32]);
+	kprintf("irq: Install IRQ %d to %p\n", index - 32, irqs[index - 32]);
 }
 
 static void _exception(struct regs* r, const char* description) {
