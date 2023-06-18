@@ -63,4 +63,7 @@ $ dd if=jeff.iso of=/dev/sdx
 - The kernel finds the functions defined itself by using the kernel_file feature
 - Using make run causes qemu to start a monitor on a telnet server to open the monitor
 use `telnet localhost 1234` in a shell
-- FIXME: PIT timer is interrupting every 50ms instead of 1ms
+
+## Problems
+- PIT timer is interrupting every 50ms instead of 1ms
+- the kernel fails to run on UEFI using OVMF for qemu but runs on bare metal

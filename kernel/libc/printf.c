@@ -12,9 +12,6 @@
 
 spinlock_t printlock = SPINLOCK_ZERO;
 
-/* Print to framebuffer, also to serial if gcc -DSERIAL_LOG is passed */
-printf_type kprintf = NULL;
-
 /* To crash if no framebuffers */
 extern void fatal();
 
@@ -80,12 +77,9 @@ void printf_init(void) {
 	
 	/* We dont want the ugly block cursor */
 	context->cursor_enabled = false;
-
-	/* Set print function pointers */
-	kprintf = kernel_printf;
 }
 
-void kernel_printf(const char* fmt, ...) {
+void kprintf(const char* fmt, ...) {
 	spinlock_acquire(&printlock);
 
 	char buffer[1024];

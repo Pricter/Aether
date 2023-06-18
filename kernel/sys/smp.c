@@ -17,7 +17,7 @@ uint64_t coreCount = 0;
 static volatile struct limine_smp_request smp_request = {
 	.id = LIMINE_SMP_REQUEST,
 	.revision = 0,
-	.flags = 0,
+	.flags = 1,
 };
 
 /* Number of cores initialized */
@@ -61,6 +61,8 @@ void smp_init(void) {
 	struct limine_smp_response *smp_response = smp_request.response;
 	struct limine_smp_info **cpu_cores = smp_response->cpus;
 
+	kprintf("smp: X2APIC Enabled? %s\n", smp_response->flags == 1 ? "true" : "false");
+
 	coreCount = smp_response->cpu_count;
 
 	/* Local array to keep track of the cores */
@@ -87,8 +89,8 @@ void smp_init(void) {
 		}
 	}
 
-	/* Safe guard, core 0 does not jump to core_start as it is already running */
-	while(initialized != (coreCount - 1)) {
+	/* Safe guard */
+	while(initialized != coreCount) {
 		asm ("pause");
 	}
 }
