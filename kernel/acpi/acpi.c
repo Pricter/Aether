@@ -25,6 +25,8 @@ struct rsdp_structure* rsdp = NULL;
 struct rsdt* rsdt = NULL;
 uint64_t lapic_address = 0;
 
+char* acpiTableAddresses = NULL;
+
 static inline int using_xsdt(void) {
 	return rsdp->revision >= 2 && rsdp->xsdtAddr != 0;
 }
@@ -34,18 +36,17 @@ struct acpi_common_header* acpi_find_table(char t_sig[static 4]) {
 	for(size_t i = 0; i < entry_count; i++) {
 		struct acpi_common_header *hdr = NULL;
 		if (using_xsdt()) {
-            hdr = (struct acpi_common_header*)(*((uint64_t*)rsdt->data + i) + HHDM_HIGHER_HALF);
+            hdr = (struct acpi_common_header*)(*((uint64_t*)acpiTableAddresses + i) + HHDM_HIGHER_HALF);
         } else {
-            hdr = (struct acpi_common_header*)(*((uint32_t*)rsdt->data + i) + HHDM_HIGHER_HALF);
+            hdr = (struct acpi_common_header*)(*((uint32_t*)acpiTableAddresses + i) + HHDM_HIGHER_HALF);
         }
-		if(!memcmp(t_sig, hdr->sig, 4)) {
-			return hdr;
-		}
+		if(!memcmp(t_sig, hdr->sig, 4)) return hdr;
 	}
 
 	kprintf("acpi: Could not find table \"");
 	for(int i = 0; i < 4; i++) kprintf("%c", t_sig[i]);
 	kprintf("\"\n");
+	panic("Could not find the required header", NULL);
 	return NULL;
 }
 
@@ -60,7 +61,7 @@ void acpi_init(void) {
 
 	if(rsdp_request.response->address == NULL) panic("System has no ACPI", NULL);
 	rsdp = (struct rsdp_structure*)(rsdp_request.response->address);
-	kprintf("acpi: RDSP structure located at %p, signature: \"");
+	kprintf("acpi: RDSP structure located at %p, signature: \"", rsdp);
 	for(int i = 0; i < 8; i++) kprintf("%c", rsdp->sig[i]);
 	kprintf("\"\n");
 
@@ -72,9 +73,10 @@ void acpi_init(void) {
 
 	kprintf("acpi: Using XSDT? %s\n", using_xsdt() ? "true" : "false");
 	kprintf("acpi: System Descriptor Table: %p\n", rsdt);
-	kprintf("acpi: SDT Sig: \"");
-	for(int i = 0; i < 4; i++) kprintf("%c", rsdt->hdr.sig[i]);
-	kprintf("\"\n");
+
+	acpiTableAddresses = malloc((rsdt->hdr.length - sizeof(struct acpi_common_header)) + 8);
+	acpiTableAddresses = align_pointer(acpiTableAddresses, using_xsdt() ? 8 : 4);
+	memcpy(acpiTableAddresses, rsdt->data, (rsdt->hdr.length - sizeof(struct acpi_common_header)));
 
 	struct madt* madt = (struct madt*)acpi_find_table("APIC");
 	lapic_address = madt->lapic_address + HHDM_HIGHER_HALF;

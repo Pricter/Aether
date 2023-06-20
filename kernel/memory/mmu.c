@@ -250,18 +250,18 @@ static uint64_t *get_next_level(uint64_t* top_level, size_t idx, bool allocate) 
 	if(!allocate) return NULL;
 
 	/* Request frame */
-	void* next_level = (void*)mmu_request_frame() + HHDM_HIGHER_HALF;
+	uint64_t next_level = (uint64_t)mmu_request_frame() + HHDM_HIGHER_HALF;
 	
 	/**
      * Because we return next_level + hhdm and any function is using that we need to 
 	 * memset next_level + hhdm instead of the address returned by mmu_request_frame
 	 */
-	memset(next_level, 0, PAGE_SIZE);
+	memset((void*)next_level, 0, PAGE_SIZE);
 	
 	/* Set the flags to present, writable, user accessable */
 	top_level[idx] = (uint64_t)(next_level - HHDM_HIGHER_HALF) | PTE_PRESENT | PTE_WRITABLE | PTE_USER;
 
-	return next_level;
+	return (void*)next_level;
 }
 
 /**
@@ -275,7 +275,7 @@ void mmu_switch_pagemap(pagemap_t* pagemap) {
 	asm volatile (
 		"mov %0, %%cr3"
 		:
-		: "r" ((void*)pagemap - HHDM_HIGHER_HALF)
+		: "r" ((void*)((uintptr_t)pagemap - HHDM_HIGHER_HALF))
 		: "memory"
 	);
 }

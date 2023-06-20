@@ -51,11 +51,16 @@ $ dd if=jeff.iso of=/dev/sdx
 - [x] Memory management
 - [x] PIT Timer
 - [x] Doxygen
+- [x] Undefined Behaviour Sanitizer
 - [ ] Proper documentation
 - [x] PS2 Controller driver
 - [ ] PS2 Keyboard driver
 - [ ] PS2 Mouse driver
 - [ ] Scheduler
+- [ ] VFS
+- [ ] tmpfs
+- [ ] Disk driver
+- [ ] Any good file system
 
 ## Other notes:
 
@@ -67,3 +72,4 @@ use `telnet localhost 1234` in a shell
 ## Problems
 - PIT timer is interrupting every 50ms instead of 1ms
 - the kernel fails to run on UEFI using OVMF for qemu but runs on bare metal
+- Manually map all entries
