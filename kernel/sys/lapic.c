@@ -3,6 +3,8 @@
 #include <kernel/pit.h>
 #include <kernel/apic.h>
 #include <kernel/cpu.h>
+#include <kernel/mmu.h>
+#include <kernel/kprintf.h>
 
 #define LAPIC_REG_SPURIOUS 0xf0
 #define LAPIC_REG_EOI 0xb0 /* End of interrupt */
@@ -33,6 +35,9 @@ void lapic_timer_stop(void) {
 
 /* Assume all local apics are enabled */
 void lapic_init(void) {
+	/* We get the lapic address with HHDM_HIGHER_HALF already added */
+	mmu_map_page(mmu_kernel_pagemap, lapic_address, lapic_address - HHDM_HIGHER_HALF, PTE_PRESENT | PTE_WRITABLE);
+
 	lapic_timer_calibrate();
 
 	lapic_write(LAPIC_REG_SPURIOUS, lapic_read(LAPIC_REG_SPURIOUS) | (1 << 8) | 0xff);

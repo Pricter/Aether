@@ -7,7 +7,7 @@ all: $(ISO_NAME).iso
 EMU_ARGS  = -M q35 -m 2G -boot d -D qlog.txt -d int -no-reboot -smp 4 -M smm=off
 
 # Host-related
-EMU_ARGS += -serial stdio -monitor telnet:localhost:1234,server,nowait
+EMU_ARGS += -serial stdio -monitor telnet:localhost:1233,server,nowait
 
 .PHONY: run run-uefi run-hdd run-hdd-uefi
 run: $(ISO_NAME).iso
@@ -15,7 +15,7 @@ run: $(ISO_NAME).iso
 
 .PHONY: run-uefi
 run-uefi: ovmf $(ISO_NAME).iso
-	qemu-system-x86_64 $(EMU_ARGS) -bios ovmf/OVMF.fd -cdrom $(ISO_NAME).iso -boot d
+	qemu-system-x86_64 $(EMU_ARGS) -bios ovmf/OVMF.fd -cdrom $(ISO_NAME).iso
 
 limine:
 	git clone https://github.com/limine-bootloader/limine.git --branch=v4.x-branch-binary --depth=1

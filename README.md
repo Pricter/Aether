@@ -71,5 +71,3 @@ use `telnet localhost 1234` in a shell
 
 ## Problems
 - PIT timer is interrupting every 50ms instead of 1ms
-- the kernel fails to run on UEFI using OVMF for qemu but runs on bare metal
-- Manually map all entries

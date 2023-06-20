@@ -10,6 +10,7 @@
 uint32_t ioapic_read(struct madt_ioapic* ioapic, uint32_t reg) {
 	/* To read something we have to put the register index in IOREGSEL */
 	uint64_t base = (uint64_t)ioapic->ioAPICAddress + HHDM_HIGHER_HALF;
+
 	*(volatile uint32_t*)base = reg;
 	
 	/* And then read IOREGWIN */

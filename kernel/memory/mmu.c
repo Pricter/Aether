@@ -387,8 +387,12 @@ void mmu_init(void) {
 
 	struct limine_kernel_address_response *kaddr = kaddr_request.response;
 
-	for(uint64_t i = 0; i < total_memory; i += 0x1000) {
-		mmu_map_page(mmu_kernel_pagemap, i + HHDM_HIGHER_HALF, i, PTE_PRESENT | PTE_WRITABLE);
+	for(uint64_t i = 0; i < response->entry_count; i++) {
+		struct limine_memmap_entry *entry = entries[i];
+
+		for(uint64_t page = entry->base; page < entry->base + entry->length; page += 0x1000) {
+			mmu_map_page(mmu_kernel_pagemap, page + HHDM_HIGHER_HALF, page, PTE_PRESENT | PTE_WRITABLE);
+		}
 	}
 
 	/* Apparently identity mapping is not good so only map the bitmap */

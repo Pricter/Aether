@@ -76,7 +76,7 @@ void _start(void) {
 	pit_init();
 
 	/* Turn on hardware interrupts */
-	enable_interrupts();
+	disable_interrupts();
 
 	/* Initialize multicore */
 	smp_init();

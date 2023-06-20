@@ -75,7 +75,7 @@ void acpi_init(void) {
 	kprintf("acpi: System Descriptor Table: %p\n", rsdt);
 
 	acpiTableAddresses = malloc((rsdt->hdr.length - sizeof(struct acpi_common_header)) + 8);
-	acpiTableAddresses = align_pointer(acpiTableAddresses, using_xsdt() ? 8 : 4);
+	acpiTableAddresses = (char*)align_pointer((void*)acpiTableAddresses, using_xsdt() ? 8 : 4);
 	memcpy(acpiTableAddresses, rsdt->data, (rsdt->hdr.length - sizeof(struct acpi_common_header)));
 
 	struct madt* madt = (struct madt*)acpi_find_table("APIC");
@@ -103,6 +103,7 @@ void acpi_init(void) {
 		case 1:
 			kprintf("acpi: Found IOAPIC #%d at %p\n", DLIST_LENGTH(madt_ioapic),
 				((struct madt_ioapic*)header)->ioAPICAddress + HHDM_HIGHER_HALF);
+			mmu_map_page(mmu_kernel_pagemap, (((struct madt_ioapic*)header)->ioAPICAddress + HHDM_HIGHER_HALF), ((struct madt_ioapic*)header)->ioAPICAddress, PTE_PRESENT | PTE_WRITABLE);
 			DLIST_PUSH_BACK(madt_ioapic, (struct madt_ioapic*)header);
 			break;
 		case 2:
