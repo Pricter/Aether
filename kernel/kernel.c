@@ -13,6 +13,7 @@
 #include <kernel/version.h>
 #include <kernel/cpu.h>
 #include <kernel/mmu.h>
+#include <kernel/ports.h>
 
 extern void debug_printf_init(void);
 extern void gdt_init(void);
@@ -72,10 +73,11 @@ void _start(void) {
 	/* Load the CPU information */
 	cpuinfo_init();
 
-	/* PIT System Clock */
-	pit_init();
+	/* Disable the PIC because we are using the ioapic */
+	outportb(0xA1, 0xff);
+	outportb(0x21, 0xff);
 
-	/* Turn on hardware interrupts */
+	/* Disable hardware interrupts */
 	disable_interrupts();
 
 	/* Initialize multicore */
@@ -83,6 +85,9 @@ void _start(void) {
 
 	/* TODO: Wrap up in a single ps2dev_init() */
 	ps2_controller_init();
+
+	/* Enable hardware interrupts */
+	enable_interrupts();
 
 	for(;;);
 }
