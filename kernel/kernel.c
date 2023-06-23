@@ -38,9 +38,6 @@ void kmain_func(void);
  * It prints the kernel information and initializes the kernel
 */
 void _start(void) {
-	/* Initialize printf */
-	printf_init();
-
 	/* Initialize memory */
     mmu_init();
 
@@ -52,6 +49,9 @@ void _start(void) {
 
 	/* Initialize the slab allocator */
 	slab_init();
+
+	/* Initialize printf */
+	printf_init();
 
 	/* Print kernel info */
 	kprintf("%s %d.%d.%d-%s running on %s\n",

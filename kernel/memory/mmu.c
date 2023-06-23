@@ -374,8 +374,6 @@ void mmu_init(void) {
 		}
     }
 
-	kprintf("Free memory: %lu\n", freeMemory);
-
 	/* Set out bitmap to used pages */
 	uint64_t bitmapPages = bytesOfBitmap / 4096;
 	for(uint64_t i = 0; i < bitmapPages; i++) {
@@ -429,17 +427,7 @@ void mmu_init(void) {
     }
 
 	/**
-	 * Switch to our pagemap, I do it manually instead of using smp
-	 * as core 0 does not jump to core_start and thus the cr3 register
-	 * does not get loaded.
+	 * Switch to our pagemap
 	*/
 	mmu_switch_pagemap(mmu_kernel_pagemap);
-
-	kprintf("mmu: Global pml at %p\n", mmu_kernel_pagemap);
-	kprintf("mmu: Bitmap size: %lu bytes, %lu pages\n", bytesOfBitmap, bitmapPages);
-	kprintf("mmu: Kernel sections:\n");
-	kprintf("         text: %p - %p %lu\n", text_start, text_end, text_end - text_start);
-	kprintf("       rodata: %p - %p %lu\n", rodata_start, rodata_end, rodata_end - rodata_start);
-	kprintf("         data: %p - %p %lu\n", data_start, data_end, data_end - data_start);
-	kprintf("mmu: Mapped all memory to hhdm. Identity mapped bitmap\n");
 }

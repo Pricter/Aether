@@ -32,6 +32,11 @@ struct limine_framebuffer* framebuffer = NULL;
 /* Printf context */
 struct flanterm_context* context = NULL;
 
+void _printf_wrap_free(void* ptr, size_t size) {
+	(void)size;
+	free(ptr);
+}
+
 #define COM1 0x3F8
 
 /* Initialize flanterm */
@@ -71,7 +76,7 @@ void printf_init(void) {
 
 	/* Initialize flanterm context */
 	context = flanterm_fb_init(
-		NULL, NULL,
+		malloc, _printf_wrap_free,
 		framebuffer->address, framebuffer->width, framebuffer->height,
 		framebuffer->pitch, NULL, NULL, &default_bg_black, &default_fg_yellow, NULL, NULL, NULL, 8, 16, 1, 1, 1, 0);
 	
