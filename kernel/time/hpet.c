@@ -55,6 +55,8 @@ void hpet_init(void) {
 }
 
 void hpet_sleep(uint64_t us) {
+	uint64_t original = hpet_read(0xF0);
+
 	uint64_t ticks = (us * 1000000000) / hpetTickPeriod;
 
 	hpet_write(0x10, hpet_read(0x10) & ~(1u << 0));
@@ -64,4 +66,19 @@ void hpet_sleep(uint64_t us) {
 	while(hpet_read(0xF0) <= ticks) {
 		asm ("pause");
 	}
+
+	hpet_write(0x10, hpet_read(0x10) & ~(1u << 0));
+	hpet_write(0xF0, original + ticks);
+	hpet_write(0x10, hpet_read(0x10) || (1u << 0));
+}
+
+void hpet_reset_counter(void) {
+	hpet_write(0x10, hpet_read(0x10) & ~(1u << 0));
+	hpet_write(0xF0, 0);
+	hpet_write(0x10, hpet_read(0x10) || (1u << 0));
+}
+
+uint64_t hpet_timer_since(void) {
+	uint64_t ticks = hpet_read(0xF0);
+	return (ticks * hpetTickPeriod) / 1000000000;
 }

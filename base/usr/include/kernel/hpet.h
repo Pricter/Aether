@@ -21,3 +21,5 @@ struct hpet {
 
 void hpet_init(void);
 void hpet_sleep(uint64_t us);
+void hpet_reset_counter(void);
+uint64_t hpet_timer_since(void);

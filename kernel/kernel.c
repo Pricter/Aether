@@ -14,6 +14,7 @@
 #include <kernel/cpu.h>
 #include <kernel/mmu.h>
 #include <kernel/ports.h>
+#include <kernel/time.h>
 
 extern void debug_printf_init(void);
 extern void gdt_init(void);
@@ -92,7 +93,7 @@ void _start(void) {
 
 	/* Initialize general timer functions */
 	timer_init();
-	
+
 	/* Enable hardware interrupts */
 	enable_interrupts();
 
