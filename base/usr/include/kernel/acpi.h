@@ -42,7 +42,7 @@ struct acpi_common_header {
 	uint8_t oemTableId[8]; /*!< An OEM-Supplied string that the OEM uses to identity the data table */
 	uint32_t oemRevision; /*!< An OEM-Supplied revision number. Larger numbers are assumed to be newer versions */
 	uint8_t creatorId[4]; /*!< Vendor ID of the utility that created the table  */
-	uint8_t creatorRevision[4]; /*!< Revision of the utility that created the table */
+	uint32_t creatorRevision; /*!< Revision of the utility that created the table */
 } __attribute__((packed));
 
 /**

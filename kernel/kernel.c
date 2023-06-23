@@ -14,6 +14,7 @@
 #include <kernel/cpu.h>
 #include <kernel/mmu.h>
 #include <kernel/ports.h>
+#include <kernel/hpet.h>
 
 extern void debug_printf_init(void);
 extern void gdt_init(void);
@@ -25,7 +26,7 @@ extern void printf_init(void);
 extern void smp_init(void);
 extern void cpuinfo_init(void);
 extern void acpi_init(void);
-extern void pit_init(void);
+extern void hpet_init(void);
 extern void ps2_controller_init(void);
 
 void kmain_func(void);
@@ -76,6 +77,9 @@ void _start(void) {
 	/* Disable the PIC because we are using the ioapic */
 	outportb(0xA1, 0xff);
 	outportb(0x21, 0xff);
+
+	/* Initialize the HPET timer */
+	hpet_init();
 
 	/* Disable hardware interrupts */
 	disable_interrupts();

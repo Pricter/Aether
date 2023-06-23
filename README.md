@@ -70,4 +70,4 @@ $ dd if=jeff.iso of=/dev/sdx
 use `telnet localhost 1234` in a shell
 
 ## Problems
-- PIT timer is interrupting every 50ms instead of 1ms
+- X2APIC does not get enabled on real hardware with x2apic
