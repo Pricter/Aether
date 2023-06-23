@@ -50,6 +50,21 @@ struct acpi_common_header* acpi_find_table(char t_sig[static 4]) {
 	return NULL;
 }
 
+bool acpi_exists(char t_sig[static 4]) {
+	size_t entry_count = (rsdt->hdr.length - sizeof(struct acpi_common_header)) / (using_xsdt() ? 8 : 4);
+	for(size_t i = 0; i < entry_count; i++) {
+		struct acpi_common_header *hdr = NULL;
+		if (using_xsdt()) {
+            hdr = (struct acpi_common_header*)(*((uint64_t*)acpiTableAddresses + i) + HHDM_HIGHER_HALF);
+        } else {
+            hdr = (struct acpi_common_header*)(*((uint32_t*)acpiTableAddresses + i) + HHDM_HIGHER_HALF);
+        }
+		if(!memcmp(t_sig, hdr->sig, 4)) return 1;
+	}
+
+	return 0;
+}
+
 struct fadt *fadt = NULL;
 
 void acpi_init(void) {

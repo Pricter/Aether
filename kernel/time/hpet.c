@@ -21,6 +21,11 @@ static inline uint64_t hpet_read(uint64_t reg) {
 }
 
 void hpet_init(void) {
+	if(!acpi_exists("HPET")) {
+		kprintf("hpet: There is no HPET available in this system\n");
+		return;
+	}
+
 	sysHPET = (struct hpet*)acpi_find_table("HPET");
 
 	hpetAddress = sysHPET->address + HHDM_HIGHER_HALF;
