@@ -53,6 +53,8 @@ $ dd if=jeff.iso of=/dev/sdx
 - [x] Doxygen
 - [x] Undefined Behaviour Sanitizer
 - [ ] Proper documentation
+- [x] HPET Timer
+- [x] LAPIC Timer
 - [x] PS2 Controller driver
 - [ ] PS2 Keyboard driver
 - [ ] PS2 Mouse driver

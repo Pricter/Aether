@@ -33,9 +33,7 @@ void ps2_write_data(uint8_t data) {
 bool dual_channel = false;
 
 void ps2_controller_init(void) {
-	if(fadt->IAPC_BOOT_ARCH & 0x02) {
-		kprintf("ps2: PS2 controller is available\n");
-	} else {
+	if(!(fadt->IAPC_BOOT_ARCH & 0x02)) {
 		kprintf("ps2: PS2 controller is not available\n");
 		return;
 	}
@@ -99,6 +97,6 @@ void ps2_controller_init(void) {
 	config |= (dual_channel ? 0x03 : 0x01);
 	ps2_write_command(0x60, false);
 	ps2_write_data(config);
-	kprintf("ps2: Config byte: 0b%b\n", ps2_write_command(0x20, true));
+	kprintf("ps2: Config byte after initalization: 0b%b\n", ps2_write_command(0x20, true));
 	kprintf("ps2: Initialized the ps2 controller\n");
 }

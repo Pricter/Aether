@@ -19,6 +19,21 @@ struct hpet {
 	uint8_t pageProtection;
 } __attribute__((packed));
 
+extern uint64_t hpetAddress;
+extern uint32_t hpetTickPeriod;
+
+static inline void hpet_write(uint64_t reg, uint64_t value) {
+	*(volatile uint64_t*)(reg + hpetAddress) = value;
+}
+
+static inline uint64_t hpet_read(uint64_t reg) {
+	return *(volatile uint64_t*)(reg + hpetAddress);
+}
+
+static inline uint64_t hpet_get_count() {
+	return hpet_read(0xF0);
+}
+
 void hpet_init(void);
 void hpet_sleep(uint64_t us);
 void hpet_reset_counter(void);

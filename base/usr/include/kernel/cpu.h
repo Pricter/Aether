@@ -47,9 +47,6 @@ static inline uint64_t rdmsr(uint32_t msr) {
 }
 
 typedef struct core {
-	/* Core number */
-	uint64_t core_number;
-
 	/* Local APIC Id */
 	uint32_t lapic_id;
 

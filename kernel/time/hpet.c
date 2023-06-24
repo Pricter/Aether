@@ -12,14 +12,6 @@ uint64_t hpetGeneralCapabilities = 0;
 
 #define HPET_TIMER_CONFIGURATION(N) (0x100 + 0x20 * (N))
 
-static inline void hpet_write(uint64_t reg, uint64_t value) {
-	*(volatile uint64_t*)(reg + hpetAddress) = value;
-}
-
-static inline uint64_t hpet_read(uint64_t reg) {
-	return *(volatile uint64_t*)(reg + hpetAddress);
-}
-
 void hpet_init(void) {
 	if(!acpi_exists("HPET")) {
 		kprintf("hpet: There is no HPET available in this system\n");
@@ -55,7 +47,7 @@ void hpet_init(void) {
 }
 
 void hpet_sleep(uint64_t us) {
-	uint64_t original = hpet_read(0xF0);
+	uint64_t original = hpet_get_count();
 
 	uint64_t ticks = (us * 1000000000) / hpetTickPeriod;
 
@@ -79,6 +71,6 @@ void hpet_reset_counter(void) {
 }
 
 uint64_t hpet_timer_since(void) {
-	uint64_t ticks = hpet_read(0xF0);
+	uint64_t ticks = hpet_get_count();
 	return (ticks * hpetTickPeriod) / 1000000000;
 }

@@ -90,7 +90,8 @@ void idt_init(void) {
 	idt_set_gate(30, _isr30, 0x28, 0x8E, 0);
 	idt_set_gate(31, _isr31, 0x28, 0x8E, 0);
 
-	idt_set_gate(128, _isr128, 0x08, 0x8E, 1); /* Legacy system call entry point, called by userspace. */
+	idt_set_gate(32, _isr32, 0x28, 0x8E, 0);
+	idt_set_gate(128, _isr128, 0x08, 0x8E, 1);
 
 	idt_reload();
 
@@ -149,6 +150,8 @@ struct regs* isr_handler_inner(struct regs* r) {
 		EXC(28, "hypervisor injection exception")
 		EXC(29, "mmu communication exception")
 		EXC(30, "security exception")
+
+		IRQ(32)
 
 		default: panic("Unexpected interrupt", r);
 	}

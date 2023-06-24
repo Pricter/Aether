@@ -82,9 +82,6 @@ void _start(void) {
 	/* Initialize the HPET timer */
 	hpet_init();
 
-	/* Disable hardware interrupts */
-	disable_interrupts();
-
 	/* Initialize multicore */
 	smp_init();
 

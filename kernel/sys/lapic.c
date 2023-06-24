@@ -3,7 +3,9 @@
 #include <kernel/apic.h>
 #include <kernel/cpu.h>
 #include <kernel/mmu.h>
+#include <kernel/hpet.h>
 #include <kernel/kprintf.h>
+#include <kernel/irq.h>
 
 #define LAPIC_REG_SPURIOUS 0xf0
 #define LAPIC_REG_EOI 0xb0 /* End of interrupt */
@@ -12,13 +14,26 @@
 #define LAPIC_REG_LVT_TIMER 0x320
 #define LAPIC_REG_TIMER_DIV 0x3e0
 #define LAPIC_REG_TIMER_CURCNT 0x390
+#define LAPIC_TIMER_PERIODIC 0x20000
 
-uint32_t lapic_read(uint32_t reg) {
-	return *(volatile uint32_t*)((uintptr_t)lapic_address + reg);
+void lapic_timer_start() {
+	hpet_reset_counter();
+	lapic_write(LAPIC_REG_TIMER_CURCNT, 0xFFFFFFFF);
+
+	hpet_sleep(10 * 1000); /* 10ms */
+
+	uint32_t ticks10Ms = 0xFFFFFFFF - lapic_read(LAPIC_REG_TIMER_CURCNT);
+	hpet_reset_counter();
+
+	lapic_write(LAPIC_REG_LVT_TIMER, 32 | LAPIC_TIMER_PERIODIC);
+	lapic_write(LAPIC_REG_TIMER_DIV, 0x3);
+	lapic_write(LAPIC_REG_TIMER_CURCNT, ticks10Ms);
 }
 
-void lapic_write(uint32_t reg, uint32_t val) {
-	*(volatile uint32_t*)((uintptr_t)lapic_address + reg) = val;
+void lapic_timer_handler(struct regs* r) {
+	(void)r;
+	lapic_write(LAPIC_REG_EOI, LAPIC_EOI_ACK);
+	kprintf("LAPIC TIMER\n");
 }
 
 /* Assume all local apics are enabled */
@@ -31,4 +46,5 @@ void lapic_init(void) {
 	}
 
 	lapic_write(LAPIC_REG_SPURIOUS, lapic_read(LAPIC_REG_SPURIOUS) | (1 << 8) | 0xff);
+	lapic_timer_start();
 }

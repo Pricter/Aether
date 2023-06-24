@@ -8,8 +8,6 @@
 #include <kernel/irq.h>
 #include <kernel/apic.h>
 
-extern void lapic_init(void);
-
 uint32_t bsp_lapic_id = 0;
 uint64_t coreCount = 0;
 
@@ -48,7 +46,7 @@ void core_start(struct limine_smp_info *core) {
 	lapic_init();
 	spinlock_release(&lock);
 
-	kprintf("smp: Processor #%ld online\n", core_local->core_number);
+	kprintf("smp: Processor #%ld online\n", core_local->lapic_id);
 
 	/* Add the initialized statement */
 	initialized++;
@@ -60,6 +58,8 @@ void core_start(struct limine_smp_info *core) {
 void smp_init(void) {
 	struct limine_smp_response *smp_response = smp_request.response;
 	struct limine_smp_info **cpu_cores = smp_response->cpus;
+
+	irq_install(lapic_timer_handler, 32);
 
 	kprintf("smp: X2APIC Enabled? %s\n", smp_response->flags == 1 ? "true" : "false");
 
@@ -76,7 +76,6 @@ void smp_init(void) {
 
 		/* Get the core_t from cpu_core_local */
 		core_t* current = &cpu_core_local[i];
-		current->core_number = i;
 
 		core->extra_argument = (uint64_t)current;
 		

@@ -37,7 +37,6 @@ extern struct regs *_isr29(struct regs*);
 extern struct regs *_isr30(struct regs*);
 extern struct regs *_isr31(struct regs*);
 extern struct regs *_isr32(struct regs*); /* Timer interrupt */
-extern struct regs *_isr33(struct regs*); /* PS2 Keyboard interrupt */
 extern struct regs *_isr128(struct regs*); /* Syscall */
 
 typedef struct regs * (*interrupt_handler_t)(struct regs *);
@@ -71,5 +70,4 @@ void idt_init(void);
 void idt_reload(void);
 uint8_t idt_allocate(void);
 
-/* index is the IRQ index, not the index in the vector table, irq 0 would be 32 in the vector table */
 void irq_install(irq_t irq, int index);
