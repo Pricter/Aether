@@ -3,9 +3,18 @@
 A Simple kernel for my own learning purposes
 
 ## Run
-To build the kernel is very simple. To build the kernel use make in the kernel folder.<br>
+To build the kernel use make in the kernel folder.<br>
 
 Using make in the project root folder will automatically also make a bootable iso.
+
+### Requirements
+The kernel requires:<br>
+- A C compiler [The kernel supports gcc and clang]
+- git
+- xorriso
+
+To run it:<br>
+- QEMU
 
 ```sh
 make -j${nproc}
