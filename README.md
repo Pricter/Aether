@@ -54,8 +54,9 @@ $ dd if=jeff.iso of=/dev/sdx
 - [x] Undefined Behaviour Sanitizer
 - [ ] Proper documentation
 - [x] HPET Timer
-- [x] LAPIC Timer
+- [ ] LAPIC Timer
 - [x] PS2 Controller driver
+- [ ] Seperate init phase and later phase
 - [ ] PS2 Keyboard driver
 - [ ] PS2 Mouse driver
 - [ ] Scheduler
@@ -63,6 +64,8 @@ $ dd if=jeff.iso of=/dev/sdx
 - [ ] tmpfs
 - [ ] Disk driver
 - [ ] Any good file system
+- [ ] USB driver
+- [ ] USB keyboard / mouse
 
 ## Other notes:
 

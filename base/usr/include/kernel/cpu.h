@@ -3,33 +3,34 @@
 #include <stdint.h>
 #include <kernel/mmu.h>
 #include <stdbool.h>
+#include <kernel/types.h>
 
 extern uint64_t coreCount;
 
-static inline void halt() {
+static inline void halt(void) {
 	asm ("cli");
 	for(;;) asm ("hlt");
 }
 
-static inline uint64_t read_cr0() {
+static inline uint64_t read_cr0(void) {
     uint64_t cr0_value;
     asm volatile("mov %%cr0, %0" : "=r" (cr0_value));
     return cr0_value;
 }
 
-static inline uint64_t read_cr2() {
+static inline uint64_t read_cr2(void) {
     uint64_t cr2_value;
     asm volatile("mov %%cr2, %0" : "=r" (cr2_value));
     return cr2_value;
 }
 
-static inline uint64_t read_cr3() {
+static inline uint64_t read_cr3(void) {
     uint64_t cr3_value;
     asm volatile("mov %%cr3, %0" : "=r" (cr3_value));
     return cr3_value;
 }
 
-static inline uint64_t read_cr4() {
+static inline uint64_t read_cr4(void) {
     uint64_t cr4_value;
     asm volatile("mov %%cr4, %0" : "=r" (cr4_value));
     return cr4_value;

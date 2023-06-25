@@ -4,14 +4,14 @@ KERNEL: kernel.elf
 CC = gcc
 LD = ld
 
-KERNEL_CFLAGS  = -g -pipe -nostdinc -Wall -Wextra -std=gnu11 -O3
+KERNEL_CFLAGS  = -g -pipe -nostdinc -Wall -Wextra -std=gnu11 -Og -pedantic -Werror -Wno-newline-eof
 KERNEL_CFLAGS += -DPRINTF_ALIAS_STANDARD_FUNCTION_NAMES_HARD -DSERIAL_LOG -DFLANTERM_FB_DISABLE_CANVAS -DDFLANTERM_FB_DISABLE_BUMP_ALLOC -DFLANTERM_FB_DISABLE_BUMP_ALLOC
 KERNEL_CFLAGS += -D_KERNEL_ -DKERNEL_ARCH=x86_64 -DKERNEL_GIT_TAG=$(shell ../util/git-tag.sh)
 KERNEL_CFLAGS += -ffreestanding -fno-stack-protector -fno-stack-check -fno-PIE
 KERNEL_CFLAGS += -fno-lto -fno-PIC -m64 -march=x86-64 -mabi=sysv -mno-mmx
 KERNEL_CFLAGS += -mno-sse -mno-sse2 -mno-red-zone -mcmodel=kernel
 KERNEL_CFLAGS += -I../base/usr/include -I../kernel -fno-omit-frame-pointer
-KERNEL_CFLAGS += -Wno-unused-variable -Wno-unused-function -fsanitize=undefined
+KERNEL_CFLAGS += -Wno-unused-variable -Wno-unused-function -fsanitize=undefined -Wno-language-extension-token -Wno-tautological-constant-compare
 
 KERNEL_LDFLAGS  = -nostdlib -static -m elf_x86_64 -no-pie
 KERNEL_LDFLAGS += -z max-page-size=0x1000 -T linker.ld

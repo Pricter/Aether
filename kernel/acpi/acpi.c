@@ -9,6 +9,7 @@
 #include <kernel/dlist.h>
 #include <stdbool.h>
 #include <kernel/cpu.h>
+#include <kernel/init.h>
 
 static volatile struct limine_rsdp_request rsdp_request = {
 	.id = LIMINE_RSDP_REQUEST,
@@ -67,7 +68,9 @@ bool acpi_exists(char t_sig[static 4]) {
 
 struct fadt *fadt = NULL;
 
-void acpi_init(void) {
+bool apic_enabled;
+
+void __init acpi_init(void) {
 	madt_lapic = DLIST_EMPTY;
 	madt_ioapic = DLIST_EMPTY;
 	madt_ioapic_so = DLIST_EMPTY;
@@ -108,11 +111,11 @@ void acpi_init(void) {
 
 		switch(header->id) {
 		case 0:
-			bool enabled = ((struct madt_lapic*)header)->flags & 1;
+			apic_enabled = (((struct madt_lapic*)header)->flags & 1) != 0;
 			bool online_capable = (((struct madt_lapic*)header)->flags >> 1) & 1;
 			kprintf("acpi: Found local APIC #%d, { enabled: %s, online-capable: %s }\n",
 				DLIST_LENGTH(madt_lapic),
-				enabled ? "true" : "false", online_capable ? "true" : "false");
+				apic_enabled ? "true" : "false", online_capable ? "true" : "false");
 			DLIST_PUSH_BACK(madt_lapic, (struct madt_lapic*)header);
 			break;
 		case 1:

@@ -7,12 +7,13 @@
 #include <kernel/irq.h>
 #include <kernel/acpi.h>
 #include <drivers/input/ps2_controller.h>
+#include <kernel/init.h>
 
 #define PS2_DATA 0x60
 #define PS2_STATUS 0x64
 #define PS2_COMMAND 0x64
 
-uint8_t ps2_read_data() {
+uint8_t ps2_read_data(void) {
 	uint8_t resp = inportb(PS2_STATUS);
 	if(!(resp & 0x01)) panic("PS2 Expected a response but did not receive it", NULL);
 
@@ -32,7 +33,7 @@ void ps2_write_data(uint8_t data) {
 
 bool dual_channel = false;
 
-void ps2_controller_init(void) {
+void __init ps2_controller_init(void) {
 	if(!(fadt->IAPC_BOOT_ARCH & 0x02)) {
 		kprintf("ps2: PS2 controller is not available\n");
 		return;

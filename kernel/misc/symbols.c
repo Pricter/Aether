@@ -7,6 +7,7 @@
 #include <memory.h>
 #include <kernel/symbols.h>
 #include <string.h>
+#include <kernel/init.h>
 
 extern void fatal(void);
 
@@ -35,7 +36,7 @@ ksym_func_t* function_table = NULL;
 /* Not the end of the world if we dont have symbols */
 static bool symbols_present = false;
 
-void symbols_init(void) {
+void __init symbols_init(void) {
 	kfile_address = kfile_request.response->kernel_file->address;
 	Elf64_Ehdr* hdr = kfile_address;
 
@@ -43,7 +44,7 @@ void symbols_init(void) {
 	Elf64_Shdr* shdr = (Elf64_Shdr*)JMP_BYTES(hdr, hdr->e_shoff);
 	Elf64_Shdr* string_shdr = (Elf64_Shdr*) JMP_BYTES(kfile_address,
 		(hdr->e_shentsize * hdr->e_shstrndx + hdr->e_shoff));
-	char* string_table = kfile_address + string_shdr->sh_offset;
+	char* string_table = (char*)((uintptr_t)kfile_address + string_shdr->sh_offset);
 
 	/* Find .symtab and .strtab sections */
 	for(uint64_t i = 0; i < hdr->e_shnum; i++) {

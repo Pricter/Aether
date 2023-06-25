@@ -16,7 +16,7 @@ SECTIONS
 
 	text_start = .;
     .text : {
-        *(.text .text.*)
+        *(.text .init.text)
     } :text
 	text_end = .;
 
@@ -24,7 +24,7 @@ SECTIONS
 
 	rodata_start = .;
     .rodata : {
-        *(.rodata .rodata.*)
+        *(.rodata .rodata.* .init.rodata)
     } :rodata
 	rodata_end = .;
 
@@ -32,13 +32,12 @@ SECTIONS
 
 	data_start = .;
     .data : {
-        *(.data .data.*)
-        *(.symbols)
+        *(.data .init.data)
     } :data
 
     .bss : {
         *(COMMON)
-        *(.bss .bss.*)
+        *(.bss)
     } :data
 	data_end = .;
 

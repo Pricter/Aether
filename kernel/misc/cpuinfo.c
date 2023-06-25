@@ -6,10 +6,11 @@
 #include <cpuid.h>
 #include <memory.h>
 #include <string.h>
+#include <kernel/init.h>
 
 cpu_info_t* cpu_info = NULL;
 
-void cpuinfo_init(void) {
+void __init cpuinfo_init(void) {
 	cpu_info = malloc(sizeof(cpu_info_t));
 	cpu_info->vendorId = malloc(13); /* 12 Characters is the Vendor ID string size */
 	cpu_info->cpuName = malloc(49); /* CPU name has a maximum of 48 bytes (4 * 4 * 3) */

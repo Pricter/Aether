@@ -1,9 +1,3 @@
-/**
- * idt.c - Licensed under the MIT License
- * 
- * initialize the idt and functions for setting the handler
-*/
-
 #include <kernel/cpu.h>
 #include <kernel/irq.h>
 #include <stdint.h>
@@ -13,6 +7,7 @@
 #include <kernel/spinlock.h>
 #include <kernel/mmu.h>
 #include <kernel/cpu.h>
+#include <kernel/init.h>
 
 static struct idt_pointer idtp;
 static idt_entry_t idt[256];
@@ -52,7 +47,7 @@ irq_t *irqs = NULL;
 /**
  * @brief Initializes the IDT and sets up gates for all interrupts.
  */
-void idt_init(void) {
+void __init idt_init(void) {
 	idtp.limit = sizeof(idt);
 	idtp.base  = (uintptr_t)&idt;
 

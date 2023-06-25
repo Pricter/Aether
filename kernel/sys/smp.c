@@ -6,7 +6,7 @@
 #include <kernel/cpu.h>
 #include <kernel/gdt.h>
 #include <kernel/irq.h>
-#include <kernel/apic.h>
+#include <kernel/init.h>
 
 uint32_t bsp_lapic_id = 0;
 uint64_t coreCount = 0;
@@ -23,6 +23,8 @@ static uint64_t initialized = 0;
 
 /* Local core list to keep track of cores */
 core_t *cpu_core_local = NULL;
+
+extern void lapic_init(void);
 
 void core_start(struct limine_smp_info *core) {
 	core_t *core_local = (core_t*)core->extra_argument;
@@ -55,11 +57,9 @@ void core_start(struct limine_smp_info *core) {
 	if(!core_local->bsp) for(;;);
 }
 
-void smp_init(void) {
+void __init smp_init(void) {
 	struct limine_smp_response *smp_response = smp_request.response;
 	struct limine_smp_info **cpu_cores = smp_response->cpus;
-
-	irq_install(lapic_timer_handler, 32);
 
 	kprintf("smp: X2APIC Enabled? %s\n", smp_response->flags == 1 ? "true" : "false");
 

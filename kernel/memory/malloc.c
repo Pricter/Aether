@@ -5,18 +5,14 @@
 #include <kernel/mmu.h>
 #include <kernel/spinlock.h>
 #include <memory.h>
+#include <kernel/init.h>
 
 #define SIZEOF_ARRAY(ARRAY) (sizeof(ARRAY) / sizeof(ARRAY[0]))
-#define DIV_ROUNDUP(VALUE, DIV) ({ \
-    __auto_type DIV_ROUNDUP_value = VALUE; \
-    __auto_type DIV_ROUNDUP_div = DIV; \
-    (DIV_ROUNDUP_value + (DIV_ROUNDUP_div - 1)) / DIV_ROUNDUP_div; \
-})
-#define ALIGN_UP(VALUE, ALIGN) ({ \
-    __auto_type ALIGN_UP_value = VALUE; \
-    __auto_type ALIGN_UP_align = ALIGN; \
-    DIV_ROUNDUP(ALIGN_UP_value, ALIGN_UP_align) * ALIGN_UP_align; \
-})
+#define DIV_ROUNDUP(VALUE, DIV) \
+    ((VALUE + (DIV) - 1) / (DIV))
+
+#define ALIGN_UP(VALUE, ALIGN) \
+    (DIV_ROUNDUP(VALUE, ALIGN) * (ALIGN))
 
 struct slab {
     spinlock_t lock;
@@ -55,7 +51,7 @@ static void create_slab(struct slab *slab, size_t ent_size) {
 
     struct slab_header *slab_ptr = (struct slab_header *)slab->first_free;
     slab_ptr->slab = slab;
-    slab->first_free = (void **)((void *)slab->first_free + header_offset);
+    slab->first_free = (void **)((uintptr_t)slab->first_free + header_offset);
 
     void **arr = (void **)slab->first_free;
     size_t max = available_size / ent_size - 1;
@@ -97,7 +93,7 @@ cleanup:
     spinlock_release(&slab->lock);
 }
 
-void slab_init(void) {
+void __init slab_init(void) {
     create_slab(&slabs[0], 8);
     create_slab(&slabs[1], 16);
     create_slab(&slabs[2], 24);
@@ -117,14 +113,14 @@ void *malloc(size_t size) {
     }
 
     size_t page_count = DIV_ROUNDUP(size, PAGE_SIZE);
-    void *ret = (void*)mmu_request_frames(page_count + 1) + HHDM_HIGHER_HALF;
+    void *ret = (void*)(mmu_request_frames(page_count + 1) + HHDM_HIGHER_HALF);
 
     struct alloc_metadata *metadata = (struct alloc_metadata *)ret;
 
     metadata->pages = page_count;
     metadata->size = size;
 
-    return ret + PAGE_SIZE;
+    return (void*)((uintptr_t)ret + PAGE_SIZE);
 }
 
 void *realloc(void *addr, size_t new_size) {
@@ -133,7 +129,7 @@ void *realloc(void *addr, size_t new_size) {
     }
 
     if (((uintptr_t)addr & 0xfff) == 0) {
-        struct alloc_metadata *metadata = (struct alloc_metadata *)(addr - PAGE_SIZE);
+        struct alloc_metadata *metadata = (struct alloc_metadata *)((uintptr_t)addr - PAGE_SIZE);
         if (DIV_ROUNDUP(metadata->size, PAGE_SIZE) == DIV_ROUNDUP(new_size, PAGE_SIZE)) {
             metadata->size = new_size;
             return addr;
@@ -177,8 +173,8 @@ void free(void *addr) {
     }
 
     if (((uintptr_t)addr & 0xfff) == 0) {
-        struct alloc_metadata *metadata = (struct alloc_metadata *)(addr - PAGE_SIZE);
-        mmu_free_frames((void *)metadata - HHDM_HIGHER_HALF, metadata->pages + 1);
+        struct alloc_metadata *metadata = (struct alloc_metadata *)((uintptr_t)addr - PAGE_SIZE);
+        mmu_free_frames((void *)((uintptr_t)metadata - HHDM_HIGHER_HALF), metadata->pages + 1);
         return;
     }
 

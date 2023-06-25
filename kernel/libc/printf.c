@@ -9,11 +9,12 @@
 #include <kernel/spinlock.h>
 #include <kernel/ports.h>
 #include <kernel/cpu.h>
+#include <kernel/init.h>
 
 spinlock_t printlock = SPINLOCK_ZERO;
 
 /* To crash if no framebuffers */
-extern void fatal();
+extern void fatal(void);
 
 /* Needed by eyalroz printf */
 void putchar_(char c) {
@@ -40,7 +41,7 @@ void _printf_wrap_free(void* ptr, size_t size) {
 #define COM1 0x3F8
 
 /* Initialize flanterm */
-void printf_init(void) {
+void __init printf_init(void) {
 	/* Enable DLAB (Divisor Latch Access Bit) */
 	outportb(COM1 + 3, 0x80);
 

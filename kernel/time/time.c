@@ -3,12 +3,13 @@
 #include <kernel/hpet.h>
 #include <kernel/time.h>
 #include <kernel/cpu.h>
+#include <kernel/init.h>
 
 sleep_func timer_sleep;
 timer_reset_func timer_reset;
 timer_since_func timer_since_reset;
 
-void timer_init(void) {
+void __init timer_init(void) {
 	if(acpi_exists("HPET")) {
 		timer_sleep = hpet_sleep;
 		timer_reset = hpet_reset_counter;

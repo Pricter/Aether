@@ -1,9 +1,3 @@
-/**
- * mmu.c - Licensed under the MIT License
- * 
- * Setup the memory map and page tables
-*/
-
 #include <kernel/mmu.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -12,9 +6,10 @@
 #include <memory.h>
 #include <kernel/kprintf.h>
 #include <kernel/cpu.h>
+#include <kernel/init.h>
 
 /* Hangs the system */
-extern void fatal();
+extern void fatal(void);
 
 /* Request limine for a memmap */
 static volatile struct limine_memmap_request memmap_request = {
@@ -226,7 +221,7 @@ uintptr_t mmu_request_frames(uint64_t num) {
 */
 void mmu_free_frames(void* addr, uint64_t pages) {
 	for(uint64_t i = 0; i < pages; i++) {
-		mmu_frame_clear((uintptr_t)(addr + (i * 4096)));
+		mmu_frame_clear((uintptr_t)((uintptr_t)addr + (i * 4096)));
 	}
 }
 
@@ -311,7 +306,7 @@ void mmu_map_page(pagemap_t* pagemap, uintptr_t virt, uintptr_t phys, uint64_t f
  * 
  * Initializes the frame allocator
 */
-void mmu_init(void) {
+void __init mmu_init(void) {
     /* Check if the bootloader returns a memmap, if not catch fire */
     struct limine_memmap_response* response = memmap_request.response;
     if(response == NULL || response->entry_count == 0) {

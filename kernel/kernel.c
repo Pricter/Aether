@@ -1,10 +1,3 @@
-/**
- * kernel.c - Licensed under the MIT License
- * 
- * Start point of the kernel
- * Initializes the kernel
-*/
-
 #include <stdint.h>
 #include <stddef.h>
 #include <limine.h>
@@ -15,6 +8,7 @@
 #include <kernel/mmu.h>
 #include <kernel/ports.h>
 #include <kernel/time.h>
+#include <kernel/cpufeature.h>
 
 extern void debug_printf_init(void);
 extern void gdt_init(void);
@@ -28,6 +22,7 @@ extern void cpuinfo_init(void);
 extern void acpi_init(void);
 extern void hpet_init(void);
 extern void timer_init(void);
+extern void cpu_feature_init(void);
 extern void ps2_controller_init(void);
 
 void kmain_func(void);
@@ -54,6 +49,8 @@ void _start(void) {
 	/* Initialize printf */
 	printf_init();
 
+	cpu_feature_init();
+
 	/* Print kernel info */
 	kprintf("%s %d.%d.%d-%s running on %s\n",
         __kernel_name,
@@ -66,6 +63,10 @@ void _start(void) {
 		__kernel_compiler_version,
 		__kernel_build_date,
 		__kernel_build_time);
+	
+	if(!cpu_has_feature(CPU_FEATURE_APIC)) {
+		panic("LAPIC is not supported", NULL);
+	}
 
 	acpi_init();
 

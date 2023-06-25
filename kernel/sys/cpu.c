@@ -2,8 +2,12 @@
 #include <kernel/kprintf.h>
 #include <kernel/spinlock.h>
 #include <kernel/symbols.h>
+#include <kernel/init.h>
+#include <kernel/cpufeature.h>
 
 spinlock_t paniclock = SPINLOCK_ZERO;
+
+uint64_t cpu_features = 0;
 
 /**
  * Handle fatal exceptions.
@@ -12,7 +16,6 @@ spinlock_t paniclock = SPINLOCK_ZERO;
  * 
  * @param desc Textual description
  * @param r Interrupt register context
- * @param faulting_address When available, the address leading to this fault
 */
 void panic(const char* desc, struct regs* r) {
 	spinlock_acquire(&paniclock);
@@ -45,4 +48,12 @@ void panic(const char* desc, struct regs* r) {
 _done:
 	spinlock_release(&paniclock);
 	fatal();
+}
+
+void __init cpu_feature_init(void) {
+	uint32_t unused, ecx = 0, edx = 0;
+	__get_cpuid(1, &unused, &unused, &ecx, &edx);
+
+	cpu_features = ((uint64_t)edx << 32) | ecx;
+	kprintf("cpu: CPU Has features edx:eax of cpuid 1 = %p\n", cpu_features);
 }

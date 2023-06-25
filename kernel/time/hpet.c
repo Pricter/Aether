@@ -3,6 +3,7 @@
 #include <kernel/hpet.h>
 #include <kernel/mmu.h>
 #include <kernel/cpu.h>
+#include <kernel/init.h>
 
 struct hpet* sysHPET;
 uint8_t comparatorsCount = 0;
@@ -12,7 +13,7 @@ uint64_t hpetGeneralCapabilities = 0;
 
 #define HPET_TIMER_CONFIGURATION(N) (0x100 + 0x20 * (N))
 
-void hpet_init(void) {
+void __init hpet_init(void) {
 	if(!acpi_exists("HPET")) {
 		kprintf("hpet: There is no HPET available in this system\n");
 		return;

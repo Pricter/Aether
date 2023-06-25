@@ -30,7 +30,7 @@ static inline uint64_t hpet_read(uint64_t reg) {
 	return *(volatile uint64_t*)(reg + hpetAddress);
 }
 
-static inline uint64_t hpet_get_count() {
+static inline uint64_t hpet_get_count(void) {
 	return hpet_read(0xF0);
 }
 

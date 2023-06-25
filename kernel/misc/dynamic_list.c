@@ -5,7 +5,7 @@
 #include <kernel/dlist.h>
 #include <kernel/kprintf.h>
 
-dlist_node_t* dlist_create_empty() {
+dlist_node_t* dlist_create_empty(void) {
 	dlist_node_t* head = malloc(sizeof(dlist_node_t));
 	head->previous = NULL;
 	head->next = NULL;
