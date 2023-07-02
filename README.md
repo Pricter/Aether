@@ -63,7 +63,7 @@ $ dd if=jeff.iso of=/dev/sdx
 - [x] Undefined Behaviour Sanitizer
 - [ ] Proper documentation
 - [x] HPET Timer
-- [ ] LAPIC Timer
+- [x] LAPIC Timer
 - [x] PS2 Controller driver
 - [ ] Seperate init phase and later phase
 - [ ] PS2 Keyboard driver
