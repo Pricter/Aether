@@ -24,6 +24,7 @@ static uint64_t initialized = 0;
 /* Local core list to keep track of cores */
 core_t *cpu_core_local = NULL;
 
+extern void lapic_irq_handler(struct regs*);
 extern void lapic_init(void);
 
 void core_start(struct limine_smp_info *core) {
@@ -46,6 +47,7 @@ void core_start(struct limine_smp_info *core) {
 	static spinlock_t lock = SPINLOCK_ZERO;
 	spinlock_acquire(&lock);
 	lapic_init();
+	disable_interrupts();
 	spinlock_release(&lock);
 
 	kprintf("smp: Processor #%ld online\n", core_local->lapic_id);
@@ -69,6 +71,8 @@ void __init smp_init(void) {
 	cpu_core_local = malloc(sizeof(core_t) * coreCount);
 
 	bsp_lapic_id = smp_response->bsp_lapic_id;
+
+	irq_install(lapic_irq_handler, 32);
 
 	/* Loop through all the cores */
 	for(uint64_t i = 0; i < coreCount; i++) {

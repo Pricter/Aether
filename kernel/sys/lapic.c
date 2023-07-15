@@ -7,6 +7,7 @@
 #include <kernel/cpufeature.h>
 #include <kernel/irq.h>
 #include <kernel/kprintf.h>
+#include <kernel/sched.h>
 
 #define LAPIC_REG_SPURIOUS 0xf0
 #define LAPIC_REG_EOI 0xb0 /* End of interrupt */
@@ -32,7 +33,7 @@ void __init lapic_timer_calibrate(void) {
 void lapic_irq_handler(struct regs* r) {
 	(void)r;
 	lapic_write(LAPIC_REG_EOI, LAPIC_EOI_ACK);
-	// TODO
+	schedule();
 }
 
 /* Assume all local apics are enabled */
@@ -42,6 +43,5 @@ void __init lapic_init(void) {
 
 	lapic_write(LAPIC_REG_SPURIOUS, lapic_read(LAPIC_REG_SPURIOUS) | (1 << 8) | 0xff);
 
-	irq_install(lapic_irq_handler, 32);
 	lapic_timer_calibrate();
 }

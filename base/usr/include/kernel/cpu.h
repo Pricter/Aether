@@ -117,8 +117,8 @@ static void fatal(void) {
 	}
 }
 
-static inline struct thread_struct *get_gs_register(void) {
-    struct thread_struct *ret = NULL;
+static inline void *get_gs_register(void) {
+    void *ret = NULL;
     asm volatile ("mov %%gs:0x0, %0" : "=r" (ret));
     return ret;
 }
@@ -130,8 +130,8 @@ static inline void wrmsr(uint32_t msr, uint64_t value) {
 	asm volatile ("wrmsr" : : "c" (msr), "a" (low), "d" (high));
 }
 
-static inline void set_gs_register(struct thread_struct *thread) {
-    wrmsr(0xC0000101, (uint64_t)thread);
-	wrmsr(0xC0000102, (uint64_t)thread);
+static inline void set_gs_register(void* toSet) {
+    wrmsr(0xC0000101, (uint64_t)toSet);
+	wrmsr(0xC0000102, (uint64_t)toSet);
 	asm volatile ("swapgs");
 }

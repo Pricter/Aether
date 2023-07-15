@@ -9,6 +9,7 @@
 #include <kernel/ports.h>
 #include <kernel/time.h>
 #include <kernel/cpufeature.h>
+#include <kernel/sched.h>
 
 extern void debug_printf_init(void);
 extern void gdt_init(void);
@@ -24,6 +25,7 @@ extern void hpet_init(void);
 extern void timer_init(void);
 extern void cpu_feature_init(void);
 extern void ps2_controller_init(void);
+extern void scheduler_init(void);
 
 void kmain_func(void);
 
@@ -91,6 +93,13 @@ void _start(void) {
 
 	/* Initialize general timer functions */
 	timer_init();
+
+	/* Initialize scheduler */
+	scheduler_init();
+
+	struct thread* kmain = scheduler_new_kthread(kmain_func, NULL);
+	scheduler_add_queue(kmain);
+	set_gs_register(kmain);
 
 	/* Enable hardware interrupts */
 	enable_interrupts();

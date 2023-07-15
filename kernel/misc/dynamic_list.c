@@ -1,76 +1,82 @@
-#include <stdint.h>
-#include <stddef.h>
-#include <stdbool.h>
-#include <kernel/mmu.h>
 #include <kernel/dlist.h>
-#include <kernel/kprintf.h>
+#include <stddef.h>
+#include <memory.h>
+#include <kernel/mmu.h>
 
 dlist_node_t* dlist_create_empty(void) {
-	dlist_node_t* head = malloc(sizeof(dlist_node_t));
-	head->previous = NULL;
-	head->next = NULL;
-	head->item = NULL;
-
-	return head;
+	dlist_node_t* node = malloc(sizeof(dlist_node_t));
+	memset((void*)node, 0, sizeof(dlist_node_t));
+	return node;
 }
 
 void dlist_push_back(dlist_node_t* head, void* item) {
+	dlist_node_t* node = malloc(sizeof(dlist_node_t));
+	memset((void*)node, 0, sizeof(dlist_node_t));
+	node->item = item;
+
 	dlist_node_t* end = head;
+
 	while(end->next != NULL) end = end->next;
-
-	dlist_node_t* new = malloc(sizeof(dlist_node_t));
-
-	new->item = item;
-	new->next = NULL;
-	new->previous = end;
-
-	end->next = new;
-}
-
-void* dlist_get_item(dlist_node_t* head, uint64_t index) {
-	uint64_t _index = 0;
-	dlist_node_t* current = head;
-	while((_index <= index) && current->next != NULL) {
-	 	current = current->next;
-	 	_index++;
-	}
-	return current->item;
+	end->next = node;
+	node->previous = end;
 }
 
 void dlist_push_front(dlist_node_t* head, void* item) {
-	dlist_node_t* new = malloc(sizeof(dlist_node_t));
-	new->next = head->next;
-	new->previous = head;
-	new->item = item;
+	dlist_node_t* node = malloc(sizeof(dlist_node_t));
+	memset((void*)node, 0, sizeof(dlist_node_t));
+	node->item = item;
 
-	if(head->next != NULL) {
-		head->next->previous = new;
+	head->next->previous = node;
+	node->previous = head;
+	node->next = head->next;
+	head->next = node;
+}
+
+void* dlist_get_item(dlist_node_t* head, uint64_t index) {
+	if(head->next == NULL) return NULL;
+	dlist_node_t* toGet = head->next;
+	uint64_t count = 0;
+
+	while(toGet->next != NULL) {
+		if(count == index) return toGet->item;
+		toGet = toGet->next;
+		count++;
 	}
-	head->next = new;
+
+	return NULL;
+}
+
+void dlist_destroy_item(dlist_node_t* head, uint64_t index) {
+	dlist_node_t* node = dlist_remove_item(head, index);
+	if(node != NULL) free(node);
+}
+
+dlist_node_t* dlist_remove_item(dlist_node_t* head, uint64_t index) {
+	if(head->next == NULL) return NULL;
+	dlist_node_t* toGet = head->next;
+	uint64_t count = 0;
+
+	while(toGet->next != NULL) {
+		if(count == index) {
+			toGet->previous->next = toGet->next;
+			if(toGet->next != NULL) toGet->next->previous = toGet->previous;
+			return toGet;
+		}
+		toGet = toGet->next;
+		count++;
+	}
+
+	return NULL;
 }
 
 uint64_t dlist_length(dlist_node_t* head) {
-	uint64_t length = 0;
-	dlist_node_t* current = head;
-	while(current->next != NULL) {
-		length++;
-		current = current->next;
-	}
-	return length;
-}
+	uint64_t count = 0;
+	dlist_node_t* end = head;
 
-void dlist_remove_item(dlist_node_t* head, void* item) {
-	dlist_node_t* current = head;
-	bool found = false;
-	while(current->next != NULL) {
-		if(current->item == item) {
-			found = true;
-			break;
-		}
-		current = current->next;
+	while(end->next != NULL) {
+		end = end->next;
+		count++;
 	}
-	if(!found) return;
-	current->next->previous = current->previous;
-	current->previous->next = current->next;
-	free(current);
+
+	return count;
 }
