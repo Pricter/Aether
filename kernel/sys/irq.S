@@ -63,6 +63,8 @@ ISR_NOERR 128
 
 .global isr_common
 isr_common:
+	cli
+
     /* Save all registers */
     swapgs
     push %rax

@@ -24,5 +24,5 @@ uint64_t dlist_length(dlist_node_t* head);
 #define DLIST_EMPTY dlist_create_empty()
 #define DLIST_LENGTH(list) dlist_length(list)
 #define DLIST_REMOVE(list, index) dlist_remove_item(list, index)
-#define DLIST_FOR(list, name) for(void* name = list; name->next != NULL; name = name->next)
+#define DLIST_FOR(list, name) for(dlist_node_t* name = list->next; name->next != NULL; name = name->next) // This is too buggy, it doesnt print the last element
 #define DLIST_DESTROY(list, index) dlist_destroy_item(list, index)

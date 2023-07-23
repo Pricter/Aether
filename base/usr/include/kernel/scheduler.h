@@ -31,9 +31,10 @@ struct process {
 	void* child_threads;
 };
 
-void scheduler_add_queue(struct thread* thread);
-void scheduler_add_blocked(struct thread* thread);
-void scheduler_remove_queue(struct thread* thread);
-void scheduler_remove_blocked(struct thread* thread);
+void scheduler_add_waiting(struct thread* thread);
+void scheduler_add_running(struct thread* thread);
+void scheduler_remove_waiting(struct thread* thread);
+void scheduler_remove_running(struct thread* thread);
 struct thread* scheduler_new_kthread(void* pc, void* arg);
-void schedule(void);
+void schedule(struct regs* r, struct thread* current);
+void scheduler_thread_die(void);

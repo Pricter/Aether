@@ -41,11 +41,10 @@ void panic(const char* desc, struct regs* r) {
 	kprintf("  cr0=0x%016lx cr2=0x%016lx cr3=0x%016lx cr4=0x%016lx\n",
 		read_cr0(), read_cr2(), read_cr3(), read_cr4());
 
-	stacktrace();
-
 	goto _done;
 
 _done:
+	stacktrace();
 	spinlock_release(&paniclock);
 	fatal();
 }

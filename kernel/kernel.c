@@ -9,7 +9,8 @@
 #include <kernel/ports.h>
 #include <kernel/time.h>
 #include <kernel/cpufeature.h>
-#include <kernel/sched.h>
+#include <kernel/scheduler.h>
+#include <kernel/hpet.h>
 
 extern void debug_printf_init(void);
 extern void gdt_init(void);
@@ -98,17 +99,17 @@ void _start(void) {
 	scheduler_init();
 
 	struct thread* kmain = scheduler_new_kthread(kmain_func, NULL);
-	scheduler_add_queue(kmain);
+	scheduler_add_running(kmain);
 	set_gs_register(kmain);
+	kprintf("kernel: Kernel initialization thread at %p\n", kmain);
 
 	/* Enable hardware interrupts */
 	enable_interrupts();
 
-	for(;;);
+	// Weird issues arise when only 1 thread is present and you want to switch to it, so we manually call it
+	kmain_func();
 }
 
 void kmain_func(void) {
-	kprintf("HERE\n");
-
-	for(;;);
+	scheduler_thread_die();
 }
