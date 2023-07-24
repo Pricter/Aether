@@ -4,12 +4,15 @@
 #include <kernel/mmu.h>
 #include <kernel/cpu.h>
 #include <kernel/init.h>
+#include <stdbool.h>
 
 struct hpet* sysHPET;
 uint8_t comparatorsCount = 0;
 uint64_t hpetAddress = 0;
 uint32_t hpetTickPeriod = 0;
 uint64_t hpetGeneralCapabilities = 0;
+
+bool hpet_enabled = false;
 
 #define HPET_TIMER_CONFIGURATION(N) (0x100 + 0x20 * (N))
 
@@ -45,12 +48,17 @@ void __init hpet_init(void) {
 		kprintf("hpet: Disabled HPET comparator #%d with config: %p\n", i,
 			hpet_read(config));
 	}
+
+	hpet_enabled = true;
 }
 
+/**
+ * Sleeps in nanoseconds
+*/
 void hpet_sleep(uint64_t us) {
 	uint64_t original = hpet_get_count();
 
-	uint64_t ticks = (us * 1000000000) / hpetTickPeriod;
+	uint64_t ticks = (us * 1000000) / hpetTickPeriod;
 
 	hpet_write(0x10, hpet_read(0x10) & ~(1u << 0));
 	hpet_write(0xF0, 0);
@@ -71,7 +79,10 @@ void hpet_reset_counter(void) {
 	hpet_write(0x10, hpet_read(0x10) || (1u << 0));
 }
 
+/**
+ * Returns in nanoseconds
+*/
 uint64_t hpet_timer_since(void) {
 	uint64_t ticks = hpet_get_count();
-	return (ticks * hpetTickPeriod) / 1000000000;
+	return (ticks * hpetTickPeriod) / 1000000;
 }

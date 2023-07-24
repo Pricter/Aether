@@ -10,6 +10,8 @@
 #include <kernel/ports.h>
 #include <kernel/cpu.h>
 #include <kernel/init.h>
+#include <kernel/time.h>
+#include <memory.h>
 
 spinlock_t printlock = SPINLOCK_ZERO;
 
@@ -104,4 +106,44 @@ void kprintf(const char* fmt, ...) {
 
 	va_end(args);
 	spinlock_release(&printlock);
+}
+
+void klog(const char* fmt, ...) {
+    spinlock_acquire(&printlock);
+
+    char time_buffer[16];
+    int time_length = snprintf(time_buffer, sizeof(time_buffer), "[ %lu ] ", timer_since() / 1000000000);
+
+    va_list args;
+    va_start(args, fmt);
+
+    int length = vsnprintf(NULL, 0, fmt, args); // Get the length of the log message.
+
+    va_end(args);
+
+    // Calculate the required size for the buffer, including space for the time buffer and newline character.
+    int total_length = time_length + length + 1; // +1 for the '\n'.
+
+    // Dynamically allocate memory for the buffer.
+    char* buffer = (char*)malloc(total_length);
+	if(buffer == NULL) return;
+
+    va_start(args, fmt);
+    vsnprintf(buffer + time_length, total_length - time_length, fmt, args);
+    va_end(args);
+
+    memcpy(buffer, time_buffer, time_length);
+    buffer[total_length - 1] = '\n';
+
+    flanterm_write(context, buffer, total_length);
+
+#ifdef SERIAL_LOG
+    for (int i = 0; i < total_length; i++) {
+        outportb(COM1, buffer[i]);
+    }
+#endif
+
+    free(buffer);
+
+    spinlock_release(&printlock);
 }

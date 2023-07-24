@@ -28,7 +28,7 @@ extern void cpu_feature_init(void);
 extern void ps2_controller_init(void);
 extern void scheduler_init(void);
 
-void kmain_func(void);
+void kinit_func(void);
 
 /**
  * The kernel start function. The kernel begins executing from
@@ -98,18 +98,21 @@ void _start(void) {
 	/* Initialize scheduler */
 	scheduler_init();
 
-	struct thread* kmain = scheduler_new_kthread(kmain_func, NULL);
-	scheduler_add_running(kmain);
-	set_gs_register(kmain);
-	kprintf("kernel: Kernel initialization thread at %p\n", kmain);
+	struct thread* kinit_thread = scheduler_new_kthread(kinit_func, NULL);
+	scheduler_add_running(kinit_thread);
+	set_gs_register(kinit_thread);
+	set_thread_running(kinit_thread);
+	kprintf("kernel: Kernel initialization thread at %p\n", kinit_thread);
 
 	/* Enable hardware interrupts */
 	enable_interrupts();
 
 	// Weird issues arise when only 1 thread is present and you want to switch to it, so we manually call it
-	kmain_func();
+	kinit_func();
 }
 
-void kmain_func(void) {
+void kinit_func(void) {
+	timer_reset();
+	klog("Reached kernel thread for initialization");
 	scheduler_thread_die();
 }

@@ -7,6 +7,8 @@
 #include <kernel/spinlock.h>
 #include <memory.h>
 #include <kernel/init.h>
+#include <stdbool.h>
+#include <kernel/apic.h>
 
 dlist_node_t* globalWaiting = NULL;
 dlist_node_t* globalRunning = NULL;
@@ -17,6 +19,9 @@ void idleForever(void) { for(;;); }
 uint32_t tid = 0;
 
 struct process* kernel_process = NULL;
+
+bool scheduler_initialized = false;
+char scheduler_timer = 0;
 
 void __init scheduler_init(void) {
 	globalWaiting = DLIST_EMPTY;
@@ -29,6 +34,11 @@ void __init scheduler_init(void) {
 	kernel_process->pml = mmu_kernel_pagemap;
 
 	idleThread = scheduler_new_kthread(idleForever, NULL);
+
+	if(lapic_initialized == true) {
+		lapic_timer_calibrate();
+		scheduler_timer = SCHEDULER_USING_LAPIC;
+	}
 }
 
 void scheduler_add_waiting(struct thread* thread) {
@@ -77,6 +87,7 @@ struct thread* scheduler_new_kthread(void* pc, void* arg) {
 	thread->previous = NULL;
 	thread->spawner = kernel_process;
 	thread->tid = get_tid();
+	set_thread_waiting(thread);
 
 	return thread;
 }
@@ -125,10 +136,12 @@ struct thread* get_next_thread(void) {
 	if(DLIST_LENGTH(globalWaiting) > 0) {
 		scheduler_remove_running(currentThread);
 		scheduler_add_waiting(currentThread);
-		struct thread* firstInList = DLIST_GET_ITEM(globalWaiting, 0, struct thread);
-		scheduler_remove_waiting(firstInList);
-		scheduler_add_running(firstInList);
-		return firstInList;
+		set_thread_waiting(currentThread);
+		struct thread* nextThread = DLIST_GET_ITEM(globalWaiting, 0, struct thread);
+		scheduler_remove_waiting(nextThread);
+		scheduler_add_running(nextThread);
+		set_thread_running(nextThread);
+		return nextThread;
 	} else return currentThread;
 
 	spinlock_release(&spinlock);

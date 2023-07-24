@@ -7,6 +7,8 @@
 #include <kernel/gdt.h>
 #include <kernel/irq.h>
 #include <kernel/init.h>
+#include <kernel/cpufeature.h>
+#include <kernel/apic.h>
 
 uint32_t bsp_lapic_id = 0;
 uint64_t coreCount = 0;
@@ -27,6 +29,8 @@ core_t *cpu_core_local = NULL;
 extern void lapic_irq_handler(struct regs*);
 extern void lapic_init(void);
 
+bool lapic_initialized = false;
+
 void core_start(struct limine_smp_info *core) {
 	core_t *core_local = (core_t*)core->extra_argument;
 
@@ -46,8 +50,10 @@ void core_start(struct limine_smp_info *core) {
 	/* Initialize LAPIC */
 	static spinlock_t lock = SPINLOCK_ZERO;
 	spinlock_acquire(&lock);
-	lapic_init();
-	disable_interrupts();
+	if(get_cpu_feature_value(CPU_FEATURE_APIC) == 1) {
+		lapic_init();
+		lapic_initialized = true;
+	}
 	spinlock_release(&lock);
 
 	kprintf("smp: Processor #%ld online\n", core_local->lapic_id);
