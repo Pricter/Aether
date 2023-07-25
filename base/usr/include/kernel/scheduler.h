@@ -27,6 +27,8 @@ struct thread {
 	struct regs* regs_context;
 
 	uint64_t state; // Blocked OR Running OR Waiting
+
+	bool reachedStartAddress;
 };
 
 struct process {

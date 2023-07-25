@@ -87,6 +87,7 @@ struct thread* scheduler_new_kthread(void* pc, void* arg) {
 	thread->previous = NULL;
 	thread->spawner = kernel_process;
 	thread->tid = get_tid();
+	thread->reachedStartAddress = false;
 	set_thread_waiting(thread);
 
 	return thread;
@@ -152,8 +153,9 @@ fallback:
 }
 
 void schedule(struct regs* r, struct thread* current) {
-	if(current != NULL) current->regs_context = r;
+	if((current != NULL) && (current->reachedStartAddress == true)) current->regs_context = r;
 	struct thread* next_thread = get_next_thread();
 	set_gs_register(next_thread);
+	next_thread->reachedStartAddress = true;
 	thread_spinup(next_thread);
 }

@@ -107,8 +107,7 @@ void _start(void) {
 	/* Enable hardware interrupts */
 	enable_interrupts();
 
-	// Weird issues arise when only 1 thread is present and you want to switch to it, so we manually call it
-	kinit_func();
+	for(;;) asm ("hlt");
 }
 
 void kinit_func(void) {
