@@ -62,13 +62,15 @@ $ dd if=jeff.iso of=/dev/sdx
 - [x] Doxygen
 - [x] Undefined Behaviour Sanitizer
 - [ ] Proper documentation
-- [x] HPET Timer
+- [-] HPET Timer<br>
+      - [ ] Periodic mode<br>
+	  - [x] One-Shot mode
 - [x] LAPIC Timer
 - [x] PS2 Controller driver
 - [ ] Seperate init phase and later phase
 - [ ] PS2 Keyboard driver
 - [ ] PS2 Mouse driver
-- [ ] Scheduler
+- [x] Scheduler
 - [ ] VFS
 - [ ] tmpfs
 - [ ] Disk driver

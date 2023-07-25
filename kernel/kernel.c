@@ -113,5 +113,9 @@ void _start(void) {
 void kinit_func(void) {
 	timer_reset();
 	klog("Reached kernel thread for initialization");
+
+	clean_reclaimable_memory();
+	klog("Reclaimed bootloader memory");
+
 	scheduler_thread_die();
 }

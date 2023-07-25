@@ -112,7 +112,7 @@ void klog(const char* fmt, ...) {
     spinlock_acquire(&printlock);
 
     char time_buffer[16];
-    int time_length = snprintf(time_buffer, sizeof(time_buffer), "[ %lu ] ", timer_since() / 1000000000);
+    int time_length = snprintf(time_buffer, sizeof(time_buffer), "[ %lu ] ", timer_since() / 1000000);
 
     va_list args;
     va_start(args, fmt);

@@ -12,7 +12,7 @@ uint64_t hpetAddress = 0;
 uint32_t hpetTickPeriod = 0;
 uint64_t hpetGeneralCapabilities = 0;
 
-bool hpet_enabled = false;
+bool hpet_initialized = false;
 
 #define HPET_TIMER_CONFIGURATION(N) (0x100 + 0x20 * (N))
 
@@ -49,16 +49,16 @@ void __init hpet_init(void) {
 			hpet_read(config));
 	}
 
-	hpet_enabled = true;
+	hpet_initialized = true;
 }
 
 /**
  * Sleeps in nanoseconds
 */
-void hpet_sleep(uint64_t us) {
+void hpet_sleep(uint64_t ns) {
 	uint64_t original = hpet_get_count();
 
-	uint64_t ticks = (us * 1000000) / hpetTickPeriod;
+	uint64_t ticks = (ns * 1000000) / hpetTickPeriod;
 
 	hpet_write(0x10, hpet_read(0x10) & ~(1u << 0));
 	hpet_write(0xF0, 0);
@@ -85,4 +85,10 @@ void hpet_reset_counter(void) {
 uint64_t hpet_timer_since(void) {
 	uint64_t ticks = hpet_get_count();
 	return (ticks * hpetTickPeriod) / 1000000;
+}
+
+void hpet_timer_periodic(uint64_t ns) {
+	uint64_t config = HPET_TIMER_CONFIGURATION(0);
+	hpet_write(config, hpet_read(config) | ~(1u << 2));
+	// TODO: Implement HPET Periodic mode
 }

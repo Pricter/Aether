@@ -22,7 +22,7 @@ struct hpet {
 extern uint64_t hpetAddress;
 extern uint32_t hpetTickPeriod;
 
-extern bool hpet_enabled;
+extern bool hpet_initialized;
 
 static inline void hpet_write(uint64_t reg, uint64_t value) {
 	*(volatile uint64_t*)(reg + hpetAddress) = value;
@@ -40,3 +40,4 @@ void hpet_init(void);
 void hpet_sleep(uint64_t us);
 void hpet_reset_counter(void);
 uint64_t hpet_timer_since(void);
+void hpet_timer_periodic(uint64_t ns);

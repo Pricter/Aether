@@ -9,6 +9,7 @@
 #include <kernel/init.h>
 #include <stdbool.h>
 #include <kernel/apic.h>
+#include <kernel/hpet.h>
 
 dlist_node_t* globalWaiting = NULL;
 dlist_node_t* globalRunning = NULL;
@@ -38,6 +39,8 @@ void __init scheduler_init(void) {
 	if(lapic_initialized == true) {
 		lapic_timer_calibrate();
 		scheduler_timer = SCHEDULER_USING_LAPIC;
+	} else if(hpet_initialized == true) {
+		hpet_timer_periodic(50000000);
 	}
 }
 

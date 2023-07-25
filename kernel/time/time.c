@@ -19,7 +19,7 @@ bool timer_initialized = false;
  * as changes in the timer can mess up the scheduler
 */
 void __init timer_init(void) {
-	if(hpet_enabled == true && scheduler_timer != SCHEDULER_USING_HPET) {
+	if(hpet_initialized == true && scheduler_timer != SCHEDULER_USING_HPET) {
 		timer_sleep = hpet_sleep;
 		timer_reset = hpet_reset_counter;
 		timer_since = hpet_timer_since;
