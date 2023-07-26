@@ -39,8 +39,8 @@ void __init scheduler_init(void) {
 	if(lapic_initialized == true) {
 		lapic_timer_calibrate();
 		scheduler_timer = SCHEDULER_USING_LAPIC;
-	} else if(hpet_initialized == true) {
-		hpet_timer_periodic(50000000);
+	} else {
+		panic("No implemented timers available for scheduler", NULL);
 	}
 }
 

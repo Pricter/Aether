@@ -296,7 +296,7 @@ void mmu_map_page(pagemap_t* pagemap, uintptr_t virt, uintptr_t phys, uint64_t f
 	uint64_t* pdp = get_next_level(pagemap, pml_index, true);
 	uint64_t* pd = get_next_level(pdp, pdp_index, true);
 	uint64_t* pt = get_next_level(pd, pd_index, true);
-	
+
 	/* Set it to phys | flags */
 	pt[pt_index] = phys | flags;
 }

@@ -86,9 +86,3 @@ uint64_t hpet_timer_since(void) {
 	uint64_t ticks = hpet_get_count();
 	return (ticks * hpetTickPeriod) / 1000000;
 }
-
-void hpet_timer_periodic(uint64_t ns) {
-	uint64_t config = HPET_TIMER_CONFIGURATION(0);
-	hpet_write(config, hpet_read(config) | ~(1u << 2));
-	// TODO: Implement HPET Periodic mode
-}

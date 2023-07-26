@@ -4,10 +4,13 @@
 #include <kernel/symbols.h>
 #include <kernel/init.h>
 #include <kernel/cpufeature.h>
+#include <kernel/mmu.h>
 
 spinlock_t paniclock = SPINLOCK_ZERO;
 
 uint64_t cpu_features = 0;
+
+extern struct limine_framebuffer *framebuffer;
 
 /**
  * Handle fatal exceptions.
@@ -19,6 +22,20 @@ uint64_t cpu_features = 0;
 */
 void panic(const char* desc, struct regs* r) {
 	spinlock_acquire(&paniclock);
+
+	uint32_t red = 0xFF0000;
+	uint32_t white = 0xFFFFFF;
+
+	uint64_t *fb_ptr = framebuffer->address;
+	for (size_t i = 0; i < framebuffer->width; i++) {
+		for(size_t j = 0; j < framebuffer->height; j++) {
+			uint64_t offset = j * framebuffer->pitch + i * framebuffer->bpp/8;
+			*(uint32_t volatile*)((uintptr_t)fb_ptr + offset) = red;
+		}
+    }
+
+	set_print_color(red, white);
+	set_print_cursor(0, 0);
 
 	kprintf("\nJeff kernel panic! (%s)\n", desc);
 

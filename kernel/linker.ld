@@ -13,35 +13,40 @@ PHDRS
 SECTIONS
 {
     . = 0xffffffff80000000;
-
+ 
+    /* Align .init sections to 0x1000 */
 	text_start = .;
-    .text : {
-        *(.text .init.text)
+    .init ALIGN(0x1000) :
+    {
+        *(.init .init.*)
     } :text
-	text_end = .;
-
+ 
+    .text : {
+        *(.text)
+    } :text
+    text_end = .;
+ 
     . = ALIGN(0x1000);
-
-	rodata_start = .;
+ 
+    rodata_start = .;
     .rodata : {
-        *(.rodata .rodata.* .init.rodata)
+        *(.rodata .rodata.*)
     } :rodata
-	rodata_end = .;
-
+    rodata_end = .;
+ 
     . = ALIGN(0x1000);
-
-	data_start = .;
+ 
+    data_start = .;
     .data : {
-        *(.data .init.data)
+        *(.data)
     } :data
-
+ 
     .bss : {
         *(COMMON)
         *(.bss)
     } :data
-	data_end = .;
-
-    /* Discard some unnecessary sections */
+    data_end = .;
+ 
     /DISCARD/ : {
         *(.eh_frame)
         *(.note .note.*)

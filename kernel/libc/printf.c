@@ -24,7 +24,7 @@ void putchar_(char c) {
 }
 
 /* Request limine for a framebuffer to print to */
-static volatile struct limine_framebuffer_request framebuffer_request = {
+volatile struct limine_framebuffer_request framebuffer_request = {
     .id = LIMINE_FRAMEBUFFER_REQUEST,
     .revision = 0
 };
@@ -85,6 +85,15 @@ void __init printf_init(void) {
 	
 	/* We dont want the ugly block cursor */
 	context->cursor_enabled = false;
+}
+
+void set_print_color(uint32_t bg, uint32_t fg) {
+	context->set_text_bg_rgb(context, bg);
+	context->set_text_fg_rgb(context, fg);
+}
+
+void set_print_cursor(size_t x, size_t y) {
+	context->set_cursor_pos(context, x, y);
 }
 
 void kprintf(const char* fmt, ...) {

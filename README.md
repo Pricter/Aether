@@ -72,6 +72,7 @@ $ dd if=jeff.iso of=/dev/sdx
 - [ ] PS2 Mouse driver
 - [x] Scheduler
 - [ ] VFS
+- [ ] Print to /dev/tty instead of framebuffer
 - [ ] tmpfs
 - [ ] Disk driver
 - [ ] Any good file system
@@ -86,4 +87,4 @@ $ dd if=jeff.iso of=/dev/sdx
 use `telnet localhost 1234` in a shell
 
 ## Problems
-- X2APIC does not get enabled on real hardware with x2apic
+- Panic function prints garbage to framebuffer
