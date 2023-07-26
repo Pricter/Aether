@@ -52,16 +52,18 @@ void scheduler_add_running(struct thread* thread) {
 	DLIST_PUSH_BACK(globalRunning, thread);
 }
 
-void scheduler_remove_waiting(struct thread* thread) {
+void scheduler_remove_waiting(struct thread* thread, bool notFoundPanic) {
 	for(uint64_t i = 0; i < DLIST_LENGTH(globalWaiting); i++) {
 		if(DLIST_GET_ITEM(globalWaiting, i, struct thread) == thread) {
 			DLIST_REMOVE(globalWaiting, i); return;
 		}
 	}
-	panic("Called scheduler_remove_waiting but thread was not found in waiting list", NULL);
+	if(notFoundPanic == true) {
+		panic("Called scheduler_remove_waiting but thread was not found in waiting list", NULL);
+	}
 }
 
-void scheduler_remove_running(struct thread* thread) {
+void scheduler_remove_running(struct thread* thread, bool notFoundPanic) {
 	for(uint64_t i = 0; i < DLIST_LENGTH(globalRunning); i++) {
 		struct thread* toTest = DLIST_GET_ITEM(globalRunning, i, struct thread);
 		if(toTest == thread) {
@@ -69,7 +71,22 @@ void scheduler_remove_running(struct thread* thread) {
 		}
 	}
 	kprintf("scheduler: Failed to remove thread %p from running list", thread);
-	panic("Called scheduler_remove_running but thread was not found in the running list", NULL);
+	if(notFoundPanic == true) {
+		panic("Called scheduler_remove_running but thread was not found in the running list", NULL);
+	}
+}
+
+void scheduler_destroy_thread(struct thread* thread) {
+	scheduler_remove_running(thread, false);
+	scheduler_remove_waiting(thread, false);
+
+	for(uint64_t i = 0; i < DLIST_LENGTH(thread->siblings); i++) {
+		struct thread* toTest = DLIST_GET_ITEM(thread->siblings, i, struct thread);
+		if(toTest == thread) {
+			klog("Destroying thread %p", thread);
+			DLIST_DESTROY(thread->siblings, i); return;
+		}
+	}
 }
 
 struct thread* scheduler_new_kthread(void* pc, void* arg) {
@@ -89,9 +106,13 @@ struct thread* scheduler_new_kthread(void* pc, void* arg) {
 	thread->self = thread;
 	thread->previous = NULL;
 	thread->spawner = kernel_process;
+	thread->parent = kernel_process;
+	thread->siblings = kernel_process->child_threads;
 	thread->tid = get_tid();
 	thread->reachedStartAddress = false;
 	set_thread_waiting(thread);
+
+	DLIST_PUSH_BACK(kernel_process->child_threads, thread);
 
 	return thread;
 }
@@ -126,7 +147,7 @@ static __attribute__((noreturn)) void thread_spinup(struct thread* thread) {
 
 void scheduler_thread_die(void) {
 	struct thread* current = get_gs_register();
-	scheduler_remove_running(current);
+	scheduler_destroy_thread(current);
 	set_gs_register(idleThread);
 
 	schedule(NULL, NULL);
@@ -138,15 +159,19 @@ struct thread* get_next_thread(void) {
 
 	struct thread* currentThread = get_gs_register();
 	if(DLIST_LENGTH(globalWaiting) > 0) {
-		scheduler_remove_running(currentThread);
+		scheduler_remove_running(currentThread, true);
 		scheduler_add_waiting(currentThread);
 		set_thread_waiting(currentThread);
 		struct thread* nextThread = DLIST_GET_ITEM(globalWaiting, 0, struct thread);
-		scheduler_remove_waiting(nextThread);
+		scheduler_remove_waiting(nextThread, true);
 		scheduler_add_running(nextThread);
 		set_thread_running(nextThread);
+		nextThread->previous = currentThread;
 		return nextThread;
-	} else return currentThread;
+	} else {
+		currentThread->previous = currentThread;
+		return currentThread;
+	};
 
 	spinlock_release(&spinlock);
 	goto fallback;

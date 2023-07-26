@@ -22,6 +22,8 @@ struct thread {
 	struct thread* previous;
 
 	struct process* spawner;
+	struct process* parent;
+	dlist_node_t* siblings;
 	uint32_t tid;
 
 	struct regs* regs_context;
@@ -34,7 +36,7 @@ struct thread {
 struct process {
 	const char* name;
 	pagemap_t* pml;
-	void* child_threads;
+	dlist_node_t* child_threads;
 };
 
 #define SCHEDULER_USING_LAPIC 1
@@ -46,8 +48,8 @@ extern char scheduler_timer;
 
 void scheduler_add_waiting(struct thread* thread);
 void scheduler_add_running(struct thread* thread);
-void scheduler_remove_waiting(struct thread* thread);
-void scheduler_remove_running(struct thread* thread);
+void scheduler_remove_waiting(struct thread* thread, bool notFoundPanic);
+void scheduler_remove_running(struct thread* thread, bool notFoundPanic);
 struct thread* scheduler_new_kthread(void* pc, void* arg);
 void schedule(struct regs* r, struct thread* current);
 void scheduler_thread_die(void);
