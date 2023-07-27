@@ -62,6 +62,7 @@ typedef struct cpu_info {
 	char* vendorId; /* Vendor, Ex: Intel, AMD, Qemu */
 	char* cpuName; /* The whole model name */
 	uint32_t coreCount; /* The number of cores on the CPU */
+	uint64_t cpuFeatures;
 } cpu_info_t;
 
 extern uint32_t bsp_lapic_id;

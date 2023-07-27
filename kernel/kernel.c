@@ -9,7 +9,6 @@
 #include <kernel/ports.h>
 #include <kernel/time.h>
 #include <kernel/cpufeature.h>
-#include <kernel/scheduler.h>
 #include <kernel/hpet.h>
 
 extern void debug_printf_init(void);
@@ -25,10 +24,6 @@ extern void acpi_init(void);
 extern void hpet_init(void);
 extern void timer_init(void);
 extern void cpu_feature_init(void);
-extern void ps2_controller_init(void);
-extern void scheduler_init(void);
-
-void kinit_func(void);
 
 /**
  * The kernel start function. The kernel begins executing from
@@ -89,33 +84,11 @@ void _start(void) {
 	/* Initialize multicore */
 	smp_init();
 
-	/* TODO: Wrap up in a single ps2dev_init() */
-	ps2_controller_init();
-
 	/* Initialize general timer functions */
 	timer_init();
-
-	/* Initialize scheduler */
-	scheduler_init();
-
-	struct thread* kinit_thread = scheduler_new_kthread(kinit_func, NULL);
-	scheduler_add_running(kinit_thread);
-	set_gs_register(kinit_thread);
-	set_thread_running(kinit_thread);
-	kprintf("kernel: Kernel initialization thread at %p\n", kinit_thread);
 
 	/* Enable hardware interrupts */
 	enable_interrupts();
 
 	for(;;) asm ("hlt");
-}
-
-void kinit_func(void) {
-	timer_reset();
-	klog("Reached kernel thread for initialization");
-
-	clean_reclaimable_memory();
-	klog("Reclaimed bootloader memory");
-
-	scheduler_thread_die();
 }
