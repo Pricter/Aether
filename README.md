@@ -61,16 +61,13 @@ $ dd if=jeff.iso of=/dev/sdx
 - [x] PIT Timer
 - [x] Doxygen
 - [x] Undefined Behaviour Sanitizer
-- [-] HPET Timer<br>
-      - [ ] Periodic mode<br>
-	  - [x] One-Shot mode
+- [x] HPET Timer<br>
 - [x] LAPIC Timer
-- [ ] Seperate init phase and later phase
 - [ ] Drivers as "modules" interface
 - [ ] PS2 Controller driver
 - [ ] PS2 Keyboard driver
 - [ ] PS2 Mouse driver
-- [x] Scheduler
+- [ ] Scheduler
 - [ ] VFS
 - [ ] Print to /dev/tty instead of framebuffer
 - [ ] tmpfs
@@ -78,6 +75,7 @@ $ dd if=jeff.iso of=/dev/sdx
 - [ ] Any good file system
 - [ ] USB driver
 - [ ] USB keyboard / mouse
+- [ ] Seperate init phase and later phase
 
 ## Other notes:
 
