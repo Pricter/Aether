@@ -63,12 +63,12 @@ $ dd if=jeff.iso of=/dev/sdx
 - [x] Undefined Behaviour Sanitizer
 - [x] HPET Timer<br>
 - [x] LAPIC Timer
-- [ ] Drivers as "modules" interface
+- [ ] Scheduler
+- [ ] VFS
 - [ ] PS2 Controller driver
 - [ ] PS2 Keyboard driver
 - [ ] PS2 Mouse driver
-- [ ] Scheduler
-- [ ] VFS
+- [ ] Drivers as "modules" interface
 - [ ] Print to /dev/tty instead of framebuffer
 - [ ] tmpfs
 - [ ] Disk driver
@@ -81,8 +81,5 @@ $ dd if=jeff.iso of=/dev/sdx
 
 - The kernel crashes if there is not enough memory instead of using a page file
 - The kernel finds the functions defined itself by using the kernel_file feature
-- Using make run causes qemu to start a monitor on a telnet server to open the monitor
-use `telnet localhost 1234` in a shell
 
 ## Problems
-- Panic function prints garbage to framebuffer

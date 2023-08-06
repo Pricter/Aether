@@ -87,15 +87,6 @@ void __init printf_init(void) {
 	context->cursor_enabled = false;
 }
 
-void set_print_color(uint32_t bg, uint32_t fg) {
-	context->set_text_bg_rgb(context, bg);
-	context->set_text_fg_rgb(context, fg);
-}
-
-void set_print_cursor(size_t x, size_t y) {
-	context->set_cursor_pos(context, x, y);
-}
-
 void kprintf(const char* fmt, ...) {
 	spinlock_acquire(&printlock);
 

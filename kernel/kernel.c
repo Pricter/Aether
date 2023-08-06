@@ -90,5 +90,7 @@ void _start(void) {
 	/* Initialize multicore */
 	smp_init();
 
+	panic("test", NULL);
+
 	for(;;) asm ("hlt");
 }
