@@ -2,27 +2,66 @@
 
 #include <stdint.h>
 
-struct dlist_node;
+enum {
+    DARRAY_CAPACITY,
+    DARRAY_LENGTH,
+    DARRAY_STRIDE,
+    DARRAY_FIELD_LENGTH
+};
 
-typedef struct dlist_node {
-	struct dlist_node* previous;
-	void* item;
-	struct dlist_node* next;
-} dlist_node_t;
+void* _darray_create(uint64_t length, uint64_t stride);
+void _darray_destroy(void* array);
 
-dlist_node_t* dlist_create_empty(void);
-void dlist_push_back(dlist_node_t* head, void* item);
-void dlist_push_front(dlist_node_t* head, void* item);
-void* dlist_get_item(dlist_node_t* head, uint64_t index);
-void dlist_destroy_item(dlist_node_t* head, uint64_t index);
-dlist_node_t* dlist_remove_item(dlist_node_t* head, uint64_t index);
-uint64_t dlist_length(dlist_node_t* head);
+uint64_t _darray_field_get(void* array, uint64_t field);
+void _darray_field_set(void* array, uint64_t field, uint64_t value);
 
-#define DLIST_PUSH_BACK(list, item) dlist_push_back(list, (item))
-#define DLIST_PUSH_FRONT(list, item) dlist_push_front(list, (item))
-#define DLIST_GET_ITEM(list, index, type) ((type*)dlist_get_item(list, index))
-#define DLIST_EMPTY dlist_create_empty()
-#define DLIST_LENGTH(list) dlist_length(list)
-#define DLIST_REMOVE(list, index) dlist_remove_item(list, index)
-#define DLIST_FOR(list, name) for(dlist_node_t* name = list->next; name->next != NULL; name = name->next) // This is too buggy, it doesnt print the last element
-#define DLIST_DESTROY(list, index) dlist_destroy_item(list, index)
+void* _darray_resize(void* array);
+
+void* _darray_push(void* array, const void* value_ptr);
+void _darray_pop(void* array, void* dest);
+
+void* _darray_pop_at(void* array, uint64_t index, void* dest);
+void* _darray_push_at(void* array, uint64_t index, void* value_ptr);
+
+#define DARRAY_DEFAULT_CAPACITY 2
+#define DARRAY_RESIZE_FACTOR 2
+
+#define darray_create(type) \
+    _darray_create(DARRAY_DEFAULT_CAPACITY, sizeof(type))
+
+#define darray_reserve(type, capacity) \
+    _darray_create(capacity, sizeof(type))
+
+#define darray_destroy(array) _darray_destroy(array)
+
+#define darray_push(array, value)                \
+    do {                                         \
+        typeof(value) temp = value;              \
+        array = _darray_push(array, &temp);      \
+    } while (0)
+
+#define darray_pop(array, value_ptr) \
+    _darray_pop(array, value_ptr)
+
+#define darray_push_at(array, index, value)       \
+    do {                                               \
+        typeof(value) temp = value;                 \
+        array = _darray_push_at(array, index, &temp); \
+    } while(0)
+
+#define darray_pop_at(array, index, value_ptr) \
+    _darray_pop_at(array, index, value_ptr)
+
+#define darray_clear(array) \
+    _darray_field_set(array, DARRAY_LENGTH, 0)
+
+#define darray_capacity(array) \
+    _darray_field_get(array, DARRAY_CAPACITY)
+
+#define darray_length(array) \
+    _darray_field_get(array, DARRAY_LENGTH)
+
+#define darray_stride(array) \
+    _darray_field_get(array, DARRAY_STRIDE)
+
+#define darray_length_set(array, value) _darray_field_set(array, DARRAY_LENGTH, value)

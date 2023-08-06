@@ -51,9 +51,6 @@ typedef struct core {
 	/* Local APIC Id */
 	uint32_t lapic_id;
 
-	/* Current core pagemap */
-	pagemap_t *pagemap;
-
 	/* If our core is the one that ran start */
 	bool bsp;
 } core_t;

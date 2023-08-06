@@ -1,88 +1,116 @@
 #include <kernel/dlist.h>
-#include <stddef.h>
 #include <memory.h>
 #include <kernel/mmu.h>
 #include <kernel/kprintf.h>
 
-dlist_node_t* dlist_create_empty(void) {
-	dlist_node_t* node = malloc(sizeof(dlist_node_t));
-	memset((void*)node, 0, sizeof(dlist_node_t));
-	return node;
+void* _darray_create(uint64_t length, uint64_t stride) {
+    uint64_t header_size = DARRAY_FIELD_LENGTH * sizeof(uint64_t);
+    uint64_t array_size = length * stride;
+    uint64_t* new_array = malloc(header_size + array_size);
+    memset(new_array, 0, header_size + array_size);
+    new_array[DARRAY_CAPACITY] = length;
+    new_array[DARRAY_LENGTH] = 0;
+    new_array[DARRAY_STRIDE] = stride;
+    return (void*)(new_array + DARRAY_FIELD_LENGTH);
 }
 
-void dlist_push_back(dlist_node_t* head, void* item) {
-	dlist_node_t* node = malloc(sizeof(dlist_node_t));
-	memset((void*)node, 0, sizeof(dlist_node_t));
-	node->item = item;
-
-	dlist_node_t* end = head;
-
-	while(end->next != NULL) end = end->next;
-	end->next = node;
-	node->previous = end;
+void _darray_destroy(void* array) {
+    uint64_t* header = (uint64_t*)array - DARRAY_FIELD_LENGTH;
+    uint64_t header_size = DARRAY_FIELD_LENGTH * sizeof(uint64_t);
+    uint64_t total_size = header_size + header[DARRAY_CAPACITY] * header[DARRAY_STRIDE];
+    free(header);
 }
 
-void dlist_push_front(dlist_node_t* head, void* item) {
-	dlist_node_t* node = malloc(sizeof(dlist_node_t));
-	memset((void*)node, 0, sizeof(dlist_node_t));
-	node->item = item;
-
-	head->next->previous = node;
-	node->previous = head;
-	node->next = head->next;
-	head->next = node;
+uint64_t _darray_field_get(void* array, uint64_t field) {
+    uint64_t* header = (uint64_t*)array - DARRAY_FIELD_LENGTH;
+    return header[field];
 }
 
-void* dlist_get_item(dlist_node_t* head, uint64_t index) {
-	if(head->next == NULL) return NULL;
-	dlist_node_t* toGet = head->next;
-	if(index == 0) return toGet->item;
-	uint64_t count = 0;
-
-	uint64_t length = DLIST_LENGTH(head);
-
-	while(count < length) {
-		if(count == index) return toGet->item;
-		toGet = toGet->next;
-		count++;
-	}
-
-	return NULL;
+void _darray_field_set(void* array, uint64_t field, uint64_t value) {
+    uint64_t* header = (uint64_t*)array - DARRAY_FIELD_LENGTH;
+    header[field] = value;
 }
 
-void dlist_destroy_item(dlist_node_t* head, uint64_t index) {
-	dlist_node_t* node = dlist_remove_item(head, index);
-	if(node != NULL) free(node);
+void* _darray_resize(void* array) {
+    uint64_t length = darray_length(array);
+    uint64_t stride = darray_stride(array);
+    void* temp = _darray_create(
+        (DARRAY_RESIZE_FACTOR * darray_capacity(array)),
+        stride);
+    memcpy(temp, array, length * stride);
+
+    _darray_field_set(temp, DARRAY_LENGTH, length);
+    _darray_destroy(array);
+    return temp;
 }
 
-dlist_node_t* dlist_remove_item(dlist_node_t* head, uint64_t index) {
-	if(head->next == NULL) return NULL;
-	dlist_node_t* toGet = head->next;
-	uint64_t count = 0;
-
-	while(toGet->next != NULL) {
-		if(count == index) {
-			toGet->previous->next = toGet->next;
-			if(toGet->next != NULL) toGet->next->previous = toGet->previous;
-			return toGet;
-		}
-		toGet = toGet->next;
-		count++;
-	}
-
-	return NULL;
+void* _darray_push(void* array, const void* value_ptr) {
+    uint64_t length = darray_length(array);
+    uint64_t stride = darray_stride(array);
+    if(length >= darray_capacity(array)) {
+        array = _darray_resize(array);
+    }
+    uint64_t addr = (uint64_t)array;
+    addr += (length * stride);
+    memcpy((void*)addr, value_ptr, stride);
+    _darray_field_set(array, DARRAY_LENGTH, length + 1);
+    return array;
 }
 
-uint64_t dlist_length(dlist_node_t* head) {
-	uint64_t count = 0;
-	dlist_node_t* current = head->next;
-	dlist_node_t* end = head->next;
-	if(end == NULL) return 0;
+void _darray_pop(void* array, void* dest) {
+    uint64_t length = darray_length(array);
+    uint64_t stride = darray_stride(array);
 
-	while(end->next != NULL) {
-		end = end->next;
-		count++;
-	}
+    uint64_t addr = (uint64_t)array;
+    addr += ((length - 1) * stride);
+    memcpy(dest, (void*)addr, stride);
+    _darray_field_set(array, DARRAY_LENGTH, length - 1);
+}
 
-	return ++count;
+void* _darray_pop_at(void* array, uint64_t index, void* dest) {
+    uint64_t length = darray_length(array);
+    uint64_t stride = darray_stride(array);
+    if(index >= length) {
+        kprintf("Index outside the bounds of the array! Length: %i, index: %i\n", length, index);
+        return array;
+    }
+
+    uint64_t addr = (uint64_t)array;
+    memcpy(dest, (void*)(addr + (index * stride)), stride);
+
+    if(index != length - 1) {
+        memcpy(
+            (void*)(addr + (index * stride)),
+            (void*)(addr + ((index + 1) * stride)),
+            stride * (length - index));
+    }
+
+    _darray_field_set(array, DARRAY_LENGTH, length - 1);
+    return array;
+}
+
+void* _darray_push_at(void* array, uint64_t index, void* value_ptr) {
+    uint64_t length = darray_length(array);
+    uint64_t stride = darray_stride(array);
+    if(index >= length) {
+        kprintf("Index outside the bounds of the array! Length: %i, index: %i\n", length, index);
+        return array;
+    }
+    if(length >= darray_capacity(array)) {
+        array = _darray_resize(array);
+    }
+
+    uint64_t addr = (uint64_t)array;
+
+    if(index != length - 1) {
+        memcpy(
+            (void*)(addr + ((index + 1) * stride)),
+            (void*)(addr + (index * stride)),
+            stride * (length - index));
+    }
+
+    memcpy((void*)(addr + (index * stride)), value_ptr, stride);
+
+    _darray_field_set(array, DARRAY_LENGTH, length + 1);
+    return array;
 }

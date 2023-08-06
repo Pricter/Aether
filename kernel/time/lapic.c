@@ -32,7 +32,6 @@ void __init lapic_timer_calibrate(void) {
 void lapic_irq_handler(struct regs* r) {
 	(void)r;
 	lapic_write(LAPIC_REG_EOI, LAPIC_EOI_ACK);
-	// schedule(r, get_gs_register());
 }
 
 /* Assume all local apics are enabled */
@@ -41,4 +40,3 @@ void __init lapic_init(void) {
 	mmu_map_page(mmu_kernel_pagemap, lapic_address, lapic_address - HHDM_HIGHER_HALF, PTE_PRESENT | PTE_WRITABLE);
 
 	lapic_write(LAPIC_REG_SPURIOUS, lapic_read(LAPIC_REG_SPURIOUS) | (1 << 8) | 0xff);
-}

@@ -81,14 +81,14 @@ void _start(void) {
 	/* Initialize the HPET timer */
 	hpet_init();
 
-	/* Initialize multicore */
-	smp_init();
-
 	/* Initialize general timer functions */
 	timer_init();
 
 	/* Enable hardware interrupts */
 	enable_interrupts();
+
+	/* Initialize multicore */
+	smp_init();
 
 	for(;;) asm ("hlt");
 }

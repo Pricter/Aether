@@ -36,7 +36,6 @@ void core_start(struct limine_smp_info *core) {
 
 	/* Set the struct fields to their appropriate values */
 	core_local->lapic_id = core->lapic_id;
-	core_local->pagemap = mmu_kernel_pagemap;
 
 	/* Load gdt in the core */
 	gdt_reload();

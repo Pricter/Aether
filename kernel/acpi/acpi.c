@@ -16,11 +16,11 @@ static volatile struct limine_rsdp_request rsdp_request = {
 	.revision = 0,
 };
 
-dlist_node_t* madt_lapic = NULL;
-dlist_node_t* madt_ioapic = NULL;
-dlist_node_t* madt_ioapic_so = NULL;
-dlist_node_t* madt_ioapic_nmi = NULL;
-dlist_node_t* madt_lapic_nmi = NULL;
+struct madt_lapic* madt_lapic = NULL;
+struct madt_ioapic* madt_ioapic = NULL;
+struct madt_ioapic_so* madt_ioapic_so = NULL;
+struct madt_ioapic_nmi* madt_ioapic_nmi = NULL;
+struct madt_lapic_nmi* madt_lapic_nmi = NULL;
 
 struct rsdp_structure* rsdp = NULL;
 struct rsdt* rsdt = NULL;
@@ -71,11 +71,11 @@ struct fadt *fadt = NULL;
 bool apic_enabled;
 
 void __init acpi_init(void) {
-	madt_lapic = DLIST_EMPTY;
-	madt_ioapic = DLIST_EMPTY;
-	madt_ioapic_so = DLIST_EMPTY;
-	madt_ioapic_nmi = DLIST_EMPTY;
-	madt_lapic_nmi = DLIST_EMPTY;
+	madt_lapic = darray_create(struct madt_lapic*);
+	madt_ioapic = darray_create(struct madt_ioapic*);
+	madt_ioapic_so = darray_create(struct madt_ioapic_so*);
+	madt_ioapic_nmi = darray_create(struct madt_ioapic_nmi*);
+	madt_lapic_nmi = darray_create(struct madt_lapic_nmi*);
 
 	if(rsdp_request.response->address == NULL) panic("System has no ACPI", NULL);
 	rsdp = (struct rsdp_structure*)(rsdp_request.response->address);
@@ -114,29 +114,29 @@ void __init acpi_init(void) {
 			apic_enabled = (((struct madt_lapic*)header)->flags & 1) != 0;
 			bool online_capable = (((struct madt_lapic*)header)->flags >> 1) & 1;
 			kprintf("acpi: Found local APIC #%d, { enabled: %s, online-capable: %s }\n",
-				DLIST_LENGTH(madt_lapic),
+				darray_length(madt_lapic),
 				apic_enabled ? "true" : "false", online_capable ? "true" : "false");
-			DLIST_PUSH_BACK(madt_lapic, (struct madt_lapic*)header);
+			darray_push(madt_lapic, (struct madt_lapic*)header);
 			break;
 		case 1:
-			kprintf("acpi: Found IOAPIC #%d at %p\n", DLIST_LENGTH(madt_ioapic),
+			kprintf("acpi: Found IOAPIC #%d at %p\n", darray_length(madt_ioapic),
 				((struct madt_ioapic*)header)->ioAPICAddress + HHDM_HIGHER_HALF);
 			mmu_map_page(mmu_kernel_pagemap, (((struct madt_ioapic*)header)->ioAPICAddress + HHDM_HIGHER_HALF), ((struct madt_ioapic*)header)->ioAPICAddress, PTE_PRESENT | PTE_WRITABLE);
-			DLIST_PUSH_BACK(madt_ioapic, (struct madt_ioapic*)header);
+			darray_push(madt_ioapic, (struct madt_ioapic*)header);
 			break;
 		case 2:
 			kprintf("acpi: Found IOAPIC source override #%lu, IRQ #%lu -> #%lu\n",
-				DLIST_LENGTH(madt_ioapic_so), ((struct madt_ioapic_so*)header)->irqSource,
+				darray_length(madt_ioapic_so), ((struct madt_ioapic_so*)header)->irqSource,
 				((struct madt_ioapic_so*)header)->gsi);
-			DLIST_PUSH_BACK(madt_ioapic_so, (struct madt_ioapic_so*)header);
+			darray_push(madt_ioapic_so, (struct madt_ioapic_so*)header);
 			break;
 		case 3:
-			kprintf("acpi: Found IOAPIC NMI #%lu\n", DLIST_LENGTH(madt_ioapic_nmi));
-			DLIST_PUSH_BACK(madt_ioapic_nmi, (struct madt_ioapic_nmi*)header);
+			kprintf("acpi: Found IOAPIC NMI #%lu\n", darray_length(madt_ioapic_nmi));
+			darray_push(madt_ioapic_nmi, (struct madt_ioapic_nmi*)header);
 			break;
 		case 4:
-			kprintf("acpi: Found local APIC NMI #%lu\n", DLIST_LENGTH(madt_lapic_nmi));
-			DLIST_PUSH_BACK(madt_lapic_nmi, (struct madt_lapic_nmi*)header);
+			kprintf("acpi: Found local APIC NMI #%lu\n", darray_length(madt_lapic_nmi));
+			darray_push(madt_lapic_nmi, (struct madt_lapic_nmi*)header);
 			break;
 		case 5:
 			lapic_address = ((struct madt_lapic_new*)header)->lapicAddress + HHDM_HIGHER_HALF;

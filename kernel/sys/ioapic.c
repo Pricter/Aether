@@ -28,20 +28,25 @@ static uint64_t ioapic_gsi_count(struct madt_ioapic *io_apic) {
 }
 
 static struct madt_ioapic *ioapic_from_gsi(uint32_t gsi) {
-    for (size_t i = 0; i < DLIST_LENGTH(madt_ioapic); i++) {
-        struct madt_ioapic *ioapic = DLIST_GET_ITEM(madt_ioapic, i, struct madt_ioapic);
+    for (uint64_t i = 0; i < darray_length(madt_ioapic); i++) {
+        struct madt_ioapic *ioapic = NULL;
+		darray_pop_at(madt_ioapic, i, ioapic);
         if (gsi >= ioapic->systemIntBase && gsi < ioapic->systemIntBase + ioapic_gsi_count(ioapic)) {
+			darray_push_at(madt_ioapic, i, ioapic);
             return ioapic;
         }
+		darray_push_at(madt_ioapic, i, ioapic);
     }
 
     return NULL;
 }
 
 void ioapic_irq_redirect(uint32_t lapic_id, uint8_t vector, uint8_t irq, bool status) {
-    for (size_t i = 0; i < DLIST_LENGTH(madt_ioapic_so); i++) {
-        struct madt_ioapic_so *iso = DLIST_GET_ITEM(madt_ioapic_so, i, struct madt_ioapic_so);
+    for (size_t i = 0; i < darray_length(madt_ioapic_so); i++) {
+        struct madt_ioapic_so *iso = NULL;
+		darray_pop_at(madt_ioapic_so, i, iso);
         if (iso->irqSource != irq) {
+			darray_push_at(madt_ioapic_so, i, iso);
             continue;
         }
 
