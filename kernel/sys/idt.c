@@ -7,7 +7,7 @@
 #include <kernel/spinlock.h>
 #include <kernel/mmu.h>
 #include <kernel/cpu.h>
-#include <kernel/init.h>
+#include <kernel/macros.h>
 
 static struct idt_pointer idtp;
 static idt_entry_t idt[256];
@@ -86,7 +86,7 @@ void __init idt_init(void) {
 	idt_set_gate(31, _isr31, 0x28, 0x8E, 0);
 
 	idt_set_gate(32, _isr32, 0x28, 0x8E, 0);
-	idt_set_gate(128, _isr128, 0x08, 0x8E, 1);
+	// idt_set_gate(128, _isr128, 0x08, 0x8E, 1);
 
 	idt_reload();
 

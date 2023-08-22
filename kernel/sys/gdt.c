@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <kernel/gdt.h>
-#include <kernel/init.h>
+#include <kernel/macros.h>
 
 /* GDT Descritor entry */
 struct gdt_descriptor {

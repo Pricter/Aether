@@ -3,7 +3,7 @@
 #include <kernel/hpet.h>
 #include <kernel/time.h>
 #include <kernel/cpu.h>
-#include <kernel/init.h>
+#include <kernel/macros.h>
 #include <kernel/kprintf.h>
 #include <stdbool.h>
 

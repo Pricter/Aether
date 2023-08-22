@@ -10,6 +10,7 @@
 #include <kernel/time.h>
 #include <kernel/cpufeature.h>
 #include <kernel/hpet.h>
+#include <stdbool.h>
 
 extern void debug_printf_init(void);
 extern void gdt_init(void);
@@ -24,6 +25,8 @@ extern void acpi_init(void);
 extern void hpet_init(void);
 extern void timer_init(void);
 extern void cpu_feature_init(void);
+
+void kinit_func(void);
 
 /**
  * The kernel start function. The kernel begins executing from
@@ -61,7 +64,7 @@ void _start(void) {
 		__kernel_compiler_version,
 		__kernel_build_date,
 		__kernel_build_time);
-	
+
 	if(!cpu_has_feature(CPU_FEATURE_APIC)) {
 		panic("LAPIC is not supported", NULL);
 	}
@@ -84,13 +87,15 @@ void _start(void) {
 	/* Initialize general timer functions */
 	timer_init();
 
-	/* Enable hardware interrupts */
-	enable_interrupts();
-
 	/* Initialize multicore */
 	smp_init();
 
-	panic("test", NULL);
+	/* Enable hardware interrupts */
+	enable_interrupts();
 
 	for(;;) asm ("hlt");
+}
+
+void kinit_func(void) {
+
 }

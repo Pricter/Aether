@@ -6,7 +6,7 @@
 #include <memory.h>
 #include <kernel/kprintf.h>
 #include <kernel/cpu.h>
-#include <kernel/init.h>
+#include <kernel/macros.h>
 
 /* Hangs the system */
 extern void fatal(void);

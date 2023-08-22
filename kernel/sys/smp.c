@@ -6,7 +6,7 @@
 #include <kernel/cpu.h>
 #include <kernel/gdt.h>
 #include <kernel/irq.h>
-#include <kernel/init.h>
+#include <kernel/macros.h>
 #include <kernel/cpufeature.h>
 #include <kernel/apic.h>
 
@@ -51,6 +51,7 @@ void core_start(struct limine_smp_info *core) {
 	spinlock_acquire(&lock);
 	if(get_cpu_feature_value(CPU_FEATURE_APIC) == 1) {
 		lapic_init();
+		lapic_timer_calibrate();
 		lapic_initialized = true;
 	}
 	spinlock_release(&lock);

@@ -9,7 +9,7 @@
 #include <kernel/dlist.h>
 #include <stdbool.h>
 #include <kernel/cpu.h>
-#include <kernel/init.h>
+#include <kernel/macros.h>
 
 static volatile struct limine_rsdp_request rsdp_request = {
 	.id = LIMINE_RSDP_REQUEST,

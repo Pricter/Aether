@@ -9,7 +9,7 @@
 #include <kernel/spinlock.h>
 #include <kernel/ports.h>
 #include <kernel/cpu.h>
-#include <kernel/init.h>
+#include <kernel/macros.h>
 #include <kernel/time.h>
 #include <memory.h>
 

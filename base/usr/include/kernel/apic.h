@@ -6,7 +6,7 @@
 #include <cpuid.h>
 #include <kernel/acpi.h>
 #include <kernel/cpu.h>
-#include <kernel/init.h>
+#include <kernel/macros.h>
 
 static inline uint32_t lapic_read(uint32_t reg) {
 	return *(volatile uint32_t*)((uintptr_t)lapic_address + reg);

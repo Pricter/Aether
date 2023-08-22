@@ -56,7 +56,7 @@ ISR_NOERR 31 /* Reserved */
 ISR_NOERR 32 /* IRQs are just the same as an exception, this is the LAPIC IRQ */
 
 /* Syscall */
-ISR_NOERR 128
+// ISR_NOERR 128
 
 .extern isr_handler
 .type isr_handler, @function

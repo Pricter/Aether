@@ -2,7 +2,7 @@
 #include <kernel/kprintf.h>
 #include <kernel/spinlock.h>
 #include <kernel/symbols.h>
-#include <kernel/init.h>
+#include <kernel/macros.h>
 #include <kernel/cpufeature.h>
 #include <kernel/mmu.h>
 
@@ -23,9 +23,9 @@ extern struct limine_framebuffer *framebuffer;
 void panic(const char* desc, struct regs* r) {
 	spinlock_acquire(&paniclock);
 
-	kprintf("\033[0;41m");
-	clear_screen();
-	reset_cursor();
+	// kprintf("\033[0;41m");
+	// clear_screen();
+	// reset_cursor();
 	kprintf("\nJeff kernel panic! (%s)\n", desc);
 
 	if(r == NULL) goto _done;

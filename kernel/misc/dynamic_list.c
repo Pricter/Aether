@@ -71,7 +71,7 @@ void* _darray_pop_at(void* array, uint64_t index, void* dest) {
     uint64_t length = darray_length(array);
     uint64_t stride = darray_stride(array);
     if(index >= length) {
-        kprintf("Index outside the bounds of the array! Length: %i, index: %i\n", length, index);
+        kprintf("Index outside the bounds of the array! Length: %llu, index: %llu\n", length, index);
         return array;
     }
 

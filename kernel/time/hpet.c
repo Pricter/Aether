@@ -3,7 +3,7 @@
 #include <kernel/hpet.h>
 #include <kernel/mmu.h>
 #include <kernel/cpu.h>
-#include <kernel/init.h>
+#include <kernel/macros.h>
 #include <stdbool.h>
 
 struct hpet* sysHPET;

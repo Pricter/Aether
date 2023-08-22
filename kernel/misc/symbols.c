@@ -7,7 +7,7 @@
 #include <memory.h>
 #include <kernel/symbols.h>
 #include <string.h>
-#include <kernel/init.h>
+#include <kernel/macros.h>
 
 extern void fatal(void);
 
