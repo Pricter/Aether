@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <kernel/cpu.h>
 #include <stdbool.h>
+#include <kernel/dlist.h>
 
 struct process;
 
@@ -28,6 +29,6 @@ struct process {
 	uint64_t runningTime;
 };
 
-extern struct process* kernel_process;
-extern struct thread* threadQueue;
-extern struct thread* threadRunning;
+extern node_t* kernel_process;
+extern node_t* threadQueue;
+extern node_t* threadRunning;

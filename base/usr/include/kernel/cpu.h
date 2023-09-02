@@ -48,6 +48,7 @@ static inline uint64_t rdmsr(uint32_t msr) {
 }
 
 typedef struct core {
+	struct core* self;
 	/* Local APIC Id */
 	uint32_t lapic_id;
 

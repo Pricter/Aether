@@ -30,7 +30,6 @@ void __init lapic_timer_calibrate(void) {
 }
 
 void lapic_irq_handler(struct regs* r) {
-	(void)r;
 	lapic_write(LAPIC_REG_EOI, LAPIC_EOI_ACK);
 }
 

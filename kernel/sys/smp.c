@@ -36,6 +36,8 @@ void core_start(struct limine_smp_info *core) {
 
 	/* Set the struct fields to their appropriate values */
 	core_local->lapic_id = core->lapic_id;
+	core_local->self = core_local;
+	set_gs_register(core_local);
 
 	/* Load gdt in the core */
 	gdt_reload();
@@ -60,6 +62,8 @@ void core_start(struct limine_smp_info *core) {
 
 	/* Add the initialized statement */
 	initialized++;
+
+	enable_interrupts();
 
 	/* Exiting from this causes a triple fault */
 	if(!core_local->bsp) for(;;);
