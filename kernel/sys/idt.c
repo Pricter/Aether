@@ -1,5 +1,5 @@
 #include <kernel/cpu.h>
-#include <kernel/irq.h>
+#include <kernel/int.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <kernel/kprintf.h>
@@ -115,8 +115,16 @@ struct regs* isr_handler_inner(struct regs* r) {
 		EXC(30, "security exception")
 
 		IRQ(32)
+		case 99: {
+			core_t* core = get_gs_register();
+			kprintf("Received halt signal on core %lu\n", core->lapic_id);
+			halt();
+		} break;
 
-		default: panic("Unexpected interrupt", r);
+		default: {
+			core_t* core = get_gs_register();
+			kprintf("int: Received Unexpected interrupt on core %lu, vector = %lu\n", core->lapic_id, r->int_no);
+		} break;
 	}
 
 	return r;

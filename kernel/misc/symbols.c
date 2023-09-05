@@ -94,7 +94,7 @@ void __init symbols_init(void) {
  * 
  * @param address The address to match
 */
-char* symbols_search(uintptr_t address) {
+ksym_func_t* symbols_search(uintptr_t address) {
     ksym_func_t* closest_symbol = (ksym_func_t*)((uint64_t)symbol_table);
 
 	for(uint64_t i = 0; i < function_count; i++) {
@@ -103,7 +103,7 @@ char* symbols_search(uintptr_t address) {
 		}
 	}
 
-    return closest_symbol->name;
+    return closest_symbol;
 }
 
 void stacktrace(void) {
@@ -111,8 +111,9 @@ void stacktrace(void) {
 	asm volatile ("movq %%rbp, %0" : "=r"(stack));
 	kprintf("Stack trace:\n");
 	while(stack->rip != 0) {
-		char* name = symbols_search(stack->rip);
-		kprintf("\t<%p> [%s]\n", stack->rip, (name == NULL) ? "[unknown]" : name);
+		ksym_func_t* func = symbols_search(stack->rip);
+		char* name = func->name;
+		kprintf("\t<%p> [%s + 0x%lx]\n", stack->rip, (name == NULL) ? "[unknown]" : name, stack->rip - func->addr);
 		stack = stack->rbp;
 	}
 }

@@ -5,7 +5,7 @@
 #include <kernel/hpet.h>
 #include <kernel/macros.h>
 #include <kernel/cpufeature.h>
-#include <kernel/irq.h>
+#include <kernel/int.h>
 #include <kernel/kprintf.h>
 
 #define LAPIC_REG_SPURIOUS 0xf0

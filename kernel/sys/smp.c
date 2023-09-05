@@ -5,7 +5,7 @@
 #include <kernel/mmu.h>
 #include <kernel/cpu.h>
 #include <kernel/gdt.h>
-#include <kernel/irq.h>
+#include <kernel/int.h>
 #include <kernel/macros.h>
 #include <kernel/cpufeature.h>
 #include <kernel/apic.h>

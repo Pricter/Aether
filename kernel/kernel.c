@@ -83,5 +83,7 @@ void _start(void) {
 	/* Initialize multicore */
 	smp_init();
 
+	asm ("int $0x0");
+
 	for(;;) asm ("hlt");
 }
