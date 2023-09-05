@@ -76,15 +76,6 @@ void core_start(struct limine_smp_info *core) {
 	}
 }
 
-void haltCore(struct regs* r) {
-	core_t* core = get_gs_register();
-	kprintf("kernel: Halt interrupt received on core %lu\n", core->lapic_id);
-	disable_interrupts();
-	for(;;) {
-		asm ("hlt");
-	}
-}
-
 void __init smp_init(void) {
 	struct limine_smp_response *smp_response = smp_request.response;
 	struct limine_smp_info **cpu_cores = smp_response->cpus;
@@ -99,7 +90,6 @@ void __init smp_init(void) {
 	bsp_lapic_id = smp_response->bsp_lapic_id;
 
 	irq_install(lapic_irq_handler, 32);
-	irq_install(haltCore, 99);
 
 	/* Loop through all the cores */
 	for(uint64_t i = 0; i < coreCount; i++) {

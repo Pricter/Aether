@@ -25,8 +25,6 @@ extern void cpu_feature_init(void);
 
 void kinit_func(void);
 
-int *x = NULL;
-
 /**
  * The kernel start function. The kernel begins executing from
  * this function, this is called by the limine bootloader.
@@ -85,11 +83,5 @@ void _start(void) {
 	/* Initialize multicore */
 	smp_init();
 
-	for(;;) {
-		asm ("hlt");
-	}
-}
-
-void kinit_func(void) {
-
+	for(;;) asm ("hlt");
 }

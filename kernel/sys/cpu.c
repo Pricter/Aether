@@ -57,7 +57,7 @@ void panic(const char* desc, struct regs* r) {
 _done:
 	stacktrace();
 	kprintf("\033[0m");
-	lapic_issue_ipi(0, 99, 3, 0);
+	// lapic_issue_ipi(0, 99, 3, 0);
 	spinlock_release(&paniclock);
 	fatal();
 }

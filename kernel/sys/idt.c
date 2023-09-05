@@ -17,7 +17,7 @@ static uint8_t free_vector = 32;
 /**
  * @brief Initialize a gate
  */
-void idt_set_gate(uint8_t num, interrupt_handler_t handler, uint16_t selector, uint8_t flags, int userspace) {
+void idt_set_gate(uint8_t num, void* handler, uint16_t selector, uint8_t flags, int userspace) {
 	uintptr_t base = (uintptr_t)handler;
 	idt[num].base_low  = (base) & 0xFFFF;
 	idt[num].base_mid  = (base >> 16) & 0xFFFF;
@@ -44,6 +44,8 @@ uint8_t idt_allocate(void) {
 
 irq_t *irqs = NULL;
 
+extern void *isrs[];
+
 /**
  * @brief Initializes the IDT and sets up gates for all interrupts.
  */
@@ -51,46 +53,11 @@ void __init idt_init(void) {
 	idtp.limit = sizeof(idt);
 	idtp.base  = (uintptr_t)&idt;
 
-	/** ISRs */
-	idt_set_gate(0,  _isr0,  0x28, 0x8E, 0);
-	idt_set_gate(1,  _isr1,  0x28, 0x8E, 0);
-	idt_set_gate(2,  _isr2,  0x28, 0x8E, 0);
-	idt_set_gate(3,  _isr3,  0x28, 0x8E, 0);
-	idt_set_gate(4,  _isr4,  0x28, 0x8E, 0);
-	idt_set_gate(5,  _isr5,  0x28, 0x8E, 0);
-	idt_set_gate(6,  _isr6,  0x28, 0x8E, 0);
-	idt_set_gate(7,  _isr7,  0x28, 0x8E, 0);
-	idt_set_gate(8,  _isr8,  0x28, 0x8E, 0);
-	idt_set_gate(9,  _isr9,  0x28, 0x8E, 0);
-	idt_set_gate(10, _isr10, 0x28, 0x8E, 0);
-	idt_set_gate(11, _isr11, 0x28, 0x8E, 0);
-	idt_set_gate(12, _isr12, 0x28, 0x8E, 0);
-	idt_set_gate(13, _isr13, 0x28, 0x8E, 0);
-	idt_set_gate(14, _isr14, 0x28, 0x8E, 0);
-	idt_set_gate(15, _isr15, 0x28, 0x8E, 0);
-	idt_set_gate(16, _isr16, 0x28, 0x8E, 0);
-	idt_set_gate(17, _isr17, 0x28, 0x8E, 0);
-	idt_set_gate(18, _isr18, 0x28, 0x8E, 0);
-	idt_set_gate(19, _isr19, 0x28, 0x8E, 0);
-	idt_set_gate(20, _isr20, 0x28, 0x8E, 0);
-	idt_set_gate(21, _isr21, 0x28, 0x8E, 0);
-	idt_set_gate(22, _isr22, 0x28, 0x8E, 0);
-	idt_set_gate(23, _isr23, 0x28, 0x8E, 0);
-	idt_set_gate(24, _isr24, 0x28, 0x8E, 0);
-	idt_set_gate(25, _isr25, 0x28, 0x8E, 0);
-	idt_set_gate(26, _isr26, 0x28, 0x8E, 0);
-	idt_set_gate(27, _isr27, 0x28, 0x8E, 0);
-	idt_set_gate(28, _isr28, 0x28, 0x8E, 0);
-	idt_set_gate(29, _isr29, 0x28, 0x8E, 0);
-	idt_set_gate(30, _isr30, 0x28, 0x8E, 0);
-	idt_set_gate(31, _isr31, 0x28, 0x8E, 0);
-
-	idt_set_gate(32, _isr32, 0x28, 0x8E, 0);
-	idt_set_gate(99, _isr99, 0x28, 0x8E, 0);
-	// idt_set_gate(128, _isr128, 0x08, 0x8E, 1);
+	for(uint64_t i = 0; i < 256; i++) {
+		idt_set_gate(i, isrs[i], 0x28, 0x8e, 0);
+	}
 
 	idt_reload();
-
 	irqs = malloc(sizeof(irq_t) * IRQ_COUNT);
 }
 
@@ -148,7 +115,6 @@ struct regs* isr_handler_inner(struct regs* r) {
 		EXC(30, "security exception")
 
 		IRQ(32)
-		IRQ(99)
 
 		default: panic("Unexpected interrupt", r);
 	}
