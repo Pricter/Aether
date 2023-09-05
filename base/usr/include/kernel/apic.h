@@ -25,4 +25,5 @@ static struct madt_ioapic *ioapic_from_gsi(uint32_t gsi);
 void ioapic_set_gsi_redirect(uint32_t lapic_id, uint8_t vector, uint8_t gsi,
                               uint16_t flags, bool status);
 void lapic_timer_handler(struct regs* r);
-void lapic_timer_calibrate(void);
+void lapic_timer_calibrate(uint64_t ns);
+void lapic_issue_ipi(uint16_t core, uint8_t vector, uint8_t shorthand, uint8_t delivery);

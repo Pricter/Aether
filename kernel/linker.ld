@@ -50,14 +50,5 @@ SECTIONS
     /DISCARD/ : {
         *(.eh_frame)
         *(.note .note.*)
-		*(.debug_info)
-		*(.debug_abbrev)
-		*(.debug_loclists)
-		*(.debug_aranges)
-		*(.debug_rnglists)
-		*(.debug_line)
-		*(.debug_str)
-		*(.debug_line_str)
-		*(.comment)
     }
 }

@@ -31,6 +31,8 @@ extern void lapic_init(void);
 
 bool lapic_initialized = false;
 
+static int *x = 0;
+
 void core_start(struct limine_smp_info *core) {
 	core_t *core_local = (core_t*)core->extra_argument;
 
@@ -50,10 +52,14 @@ void core_start(struct limine_smp_info *core) {
 
 	/* Initialize LAPIC */
 	static spinlock_t lock = SPINLOCK_ZERO;
+	if(!cpu_has_feature(CPU_FEATURE_APIC)) {
+		panic("LAPIC is not supported", NULL);
+	}
+
 	spinlock_acquire(&lock);
 	if(get_cpu_feature_value(CPU_FEATURE_APIC) == 1) {
 		lapic_init();
-		lapic_timer_calibrate();
+		lapic_timer_calibrate(10000000);
 		lapic_initialized = true;
 	}
 	spinlock_release(&lock);
@@ -63,10 +69,20 @@ void core_start(struct limine_smp_info *core) {
 	/* Add the initialized statement */
 	initialized++;
 
-	enable_interrupts();
-
 	/* Exiting from this causes a triple fault */
-	if(!core_local->bsp) for(;;);
+	if(core_local->bsp != 1) {
+		enable_interrupts();
+		for(;;) asm ("hlt");
+	}
+}
+
+void haltCore(struct regs* r) {
+	core_t* core = get_gs_register();
+	kprintf("kernel: Halt interrupt received on core %lu\n", core->lapic_id);
+	disable_interrupts();
+	for(;;) {
+		asm ("hlt");
+	}
 }
 
 void __init smp_init(void) {
@@ -83,6 +99,7 @@ void __init smp_init(void) {
 	bsp_lapic_id = smp_response->bsp_lapic_id;
 
 	irq_install(lapic_irq_handler, 32);
+	irq_install(haltCore, 99);
 
 	/* Loop through all the cores */
 	for(uint64_t i = 0; i < coreCount; i++) {
@@ -100,10 +117,11 @@ void __init smp_init(void) {
 			current->bsp = true;
 			core_start(core);
 		}
+
+		while (initialized != (i + 1)) {
+			asm ("pause");
+		}
 	}
 
-	/* Safe guard */
-	while(initialized != coreCount) {
-		asm ("pause");
-	}
+	enable_interrupts();
 }

@@ -5,12 +5,15 @@
 #include <kernel/macros.h>
 #include <kernel/cpufeature.h>
 #include <kernel/mmu.h>
+#include <kernel/apic.h>
 
 spinlock_t paniclock = SPINLOCK_ZERO;
 
 uint64_t cpu_features = 0;
 
 extern struct limine_framebuffer *framebuffer;
+
+bool paniced = false;
 
 /**
  * Handle fatal exceptions.
@@ -26,7 +29,8 @@ void panic(const char* desc, struct regs* r) {
 	// kprintf("\033[0;41m");
 	// clear_screen();
 	// reset_cursor();
-	kprintf("\nJeff kernel panic! (%s)\n", desc);
+	core_t* core = get_gs_register();
+	kprintf("\nJeff kernel panic! (%s) on core %lu\n", desc, core->lapic_id);
 
 	if(r == NULL) goto _done;
 
@@ -46,12 +50,14 @@ void panic(const char* desc, struct regs* r) {
 		rdmsr(0xc0000101), rdmsr(0xc0000102));
 	kprintf("  cr0=0x%016lx cr2=0x%016lx cr3=0x%016lx cr4=0x%016lx\n",
 		read_cr0(), read_cr2(), read_cr3(), read_cr4());
+	kprintf("  core=%lu bsp=%s\n", core->lapic_id, core->bsp ? "true" : "false");
 
 	goto _done;
 
 _done:
 	stacktrace();
 	kprintf("\033[0m");
+	lapic_issue_ipi(0, 99, 3, 0);
 	spinlock_release(&paniclock);
 	fatal();
 }

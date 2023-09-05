@@ -54,6 +54,7 @@ ISR_NOERR 30 /* Security exception */
 ISR_NOERR 31 /* Reserved */
 
 ISR_NOERR 32 /* IRQs are just the same as an exception, this is the LAPIC IRQ */
+ISR_NOERR 99 /* Halt the core */
 
 /* Syscall */
 // ISR_NOERR 128

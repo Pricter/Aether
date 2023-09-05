@@ -86,6 +86,7 @@ void __init idt_init(void) {
 	idt_set_gate(31, _isr31, 0x28, 0x8E, 0);
 
 	idt_set_gate(32, _isr32, 0x28, 0x8E, 0);
+	idt_set_gate(99, _isr99, 0x28, 0x8E, 0);
 	// idt_set_gate(128, _isr128, 0x08, 0x8E, 1);
 
 	idt_reload();
@@ -130,11 +131,11 @@ struct regs* isr_handler_inner(struct regs* r) {
 		EXC(5, "bound range exceeded")
 		EXC(6, "invalid opcode")
 		EXC(7, "device not available")
-		case 8: break; // TODO: Make a handler
+		case 8: panic("Double fault", r); break;
 		EXC(10, "invalid TSS")
 		EXC(11, "segment not present")
 		EXC(12, "stack-segment fault")
-		case 13: panic("Double fault", r); break;
+		case 13: panic("General protection fault", r); break;
 		EXC(14, "page fault") // TODO: Make a handler
 		EXC(16, "floating point exception")
 		EXC(17, "alignment check")
@@ -147,6 +148,7 @@ struct regs* isr_handler_inner(struct regs* r) {
 		EXC(30, "security exception")
 
 		IRQ(32)
+		IRQ(99)
 
 		default: panic("Unexpected interrupt", r);
 	}

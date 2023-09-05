@@ -4,7 +4,7 @@ ISO_NAME = jeff
 all: $(ISO_NAME).iso
 
 # General
-EMU_ARGS  = -M q35 -m 2G -boot d -D qlog.txt -d int -no-reboot -smp 4 -M smm=off
+EMU_ARGS  = -M q35 -m 2G -boot d -D qlog.txt -d int -no-reboot -smp 16 -M smm=off
 
 # Host-related
 EMU_ARGS += -serial stdio -monitor telnet:localhost:1233,server,nowait
