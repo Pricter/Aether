@@ -1,0 +1,5 @@
+target remote localhost:1234
+add-symbol-file kernel/kernel.elf
+layout split
+layout regs
+source util/pt-inspector/pt.py

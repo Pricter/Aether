@@ -24,7 +24,7 @@ bool paniced = false;
  * @param r Interrupt register context
 */
 void panic(const char* desc, struct regs* r) {
-	spinlock_acquire(&paniclock);
+	bool int_state = spinlock_acquire(&paniclock);
 
 	// kprintf("\033[0;41m");
 	// clear_screen();
@@ -56,9 +56,9 @@ void panic(const char* desc, struct regs* r) {
 
 _done:
 	stacktrace();
-	kprintf("\033[0m");
+	// kprintf("\033[0m");
 	lapic_issue_ipi(0, 99, 3, 0);
-	spinlock_release(&paniclock);
+	spinlock_release(&paniclock, int_state);
 	fatal();
 }
 

@@ -4,12 +4,12 @@
 #include <kernel/mmu.h>
 #include <stdbool.h>
 #include <kernel/types.h>
+#include <kernel/scheduler.h>
 
 extern uint64_t coreCount;
 
 static inline void halt(void) {
-	asm ("cli");
-	for(;;) asm ("hlt");
+	asm volatile("1: hlt; jmp 1b");
 }
 
 static inline uint64_t read_cr0(void) {
@@ -49,11 +49,14 @@ static inline uint64_t rdmsr(uint32_t msr) {
 
 typedef struct core {
 	struct core* self;
+
 	/* Local APIC Id */
 	uint32_t lapic_id;
 
 	/* If our core is the one that ran start */
 	bool bsp;
+
+	struct thread* current;
 } core_t;
 
 typedef struct cpu_info {
@@ -108,12 +111,7 @@ struct regs {
 void panic(const char* desc, struct regs* r);
 
 static void fatal(void) {
-	asm ("cli");
-	for(;;) {
-		asm volatile (
-			"hlt\n"
-		);
-	}
+	asm volatile("1: cli; hlt; jmp 1b");
 }
 
 static inline void *get_gs_register(void) {

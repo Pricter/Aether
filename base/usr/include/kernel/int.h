@@ -24,7 +24,7 @@ struct idt_pointer {
 	uintptr_t base;
 } __attribute__((packed));
 
-typedef void (*irq_t)(struct regs* r);
+typedef struct regs* (*irq_t)(struct regs* r);
 
 #define IRQ_COUNT 2
 extern irq_t *irqs;

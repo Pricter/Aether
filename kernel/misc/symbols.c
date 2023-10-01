@@ -26,6 +26,8 @@ char* symbol_string_table = NULL;
 uint64_t symbol_count = 0;
 uint64_t function_count = 0;
 
+void* debug_info_start = NULL;
+
 /* Store out functions */
 ksym_func_t* function_table = NULL;
 
@@ -55,6 +57,7 @@ void __init symbols_init(void) {
 			symbol_count = shdr->sh_size / sizeof(Elf64_Sym);
 		}
 		if(!strcmp(name, ".strtab")) symbol_string_table = (char*)JMP_BYTES(kfile_address, shdr->sh_offset);
+		if(!strcmp(name, ".debug_info")) debug_info_start = (void*)JMP_BYTES(kfile_address, shdr->sh_offset);
 		shdr = (Elf64_Shdr*)JMP_BYTES(shdr, hdr->e_shentsize);
 	}
 
@@ -95,6 +98,7 @@ void __init symbols_init(void) {
  * @param address The address to match
 */
 ksym_func_t* symbols_search(uintptr_t address) {
+	if(symbols_present == false) return NULL;
     ksym_func_t* closest_symbol = (ksym_func_t*)((uint64_t)symbol_table);
 
 	for(uint64_t i = 0; i < function_count; i++) {

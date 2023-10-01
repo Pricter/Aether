@@ -10,8 +10,8 @@
 #include <kernel/ports.h>
 #include <kernel/cpu.h>
 #include <kernel/macros.h>
-#include <kernel/time.h>
 #include <memory.h>
+#include <kernel/hpet.h>
 
 spinlock_t printlock = SPINLOCK_ZERO;
 
@@ -88,7 +88,7 @@ void __init printf_init(void) {
 }
 
 void kprintf(const char* fmt, ...) {
-	spinlock_acquire(&printlock);
+	bool int_state = spinlock_acquire(&printlock);
 
 	char buffer[1024];
 
@@ -105,14 +105,15 @@ void kprintf(const char* fmt, ...) {
 #endif
 
 	va_end(args);
-	spinlock_release(&printlock);
+	spinlock_release(&printlock, int_state);
 }
 
 void klog(const char* fmt, ...) {
-    spinlock_acquire(&printlock);
+	disable_interrupts();
+    bool int_state = spinlock_acquire(&printlock);
 
     char time_buffer[16];
-    int time_length = snprintf(time_buffer, sizeof(time_buffer), "[ %lu ] ", timer_since() / 1000000);
+    int time_length = snprintf(time_buffer, sizeof(time_buffer), "[ %lu ] ", ((core_t*)get_gs_register())->current->runningTime);
 
     va_list args;
     va_start(args, fmt);
@@ -133,7 +134,6 @@ void klog(const char* fmt, ...) {
     va_end(args);
 
     memcpy(buffer, time_buffer, time_length);
-    buffer[total_length - 1] = '\n';
 
     flanterm_write(context, buffer, total_length);
 
@@ -145,5 +145,5 @@ void klog(const char* fmt, ...) {
 
     free(buffer);
 
-    spinlock_release(&printlock);
+    spinlock_release(&printlock, int_state);
 }

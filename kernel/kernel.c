@@ -8,6 +8,8 @@
 #include <kernel/ports.h>
 #include <kernel/cpufeature.h>
 #include <stdbool.h>
+#include <kernel/scheduler.h>
+#include <kernel/hpet.h>
 
 extern void debug_printf_init(void);
 extern void gdt_init(void);
@@ -20,10 +22,15 @@ extern void smp_init(void);
 extern void cpuinfo_init(void);
 extern void acpi_init(void);
 extern void hpet_init(void);
-extern void timer_init(void);
 extern void cpu_feature_init(void);
 
-void kinit_func(void);
+void kinit_func(void) {
+	for(;;);
+}
+
+void ktest_func(void) {
+	for(;;);
+}
 
 /**
  * The kernel start function. The kernel begins executing from
@@ -47,8 +54,6 @@ void _start(void) {
 	/* Initialize printf */
 	printf_init();
 
-	cpu_feature_init();
-
 	/* Print kernel info */
 	kprintf("%s %d.%d.%d-%s running on %s\n",
         __kernel_name,
@@ -61,6 +66,8 @@ void _start(void) {
 		__kernel_compiler_version,
 		__kernel_build_date,
 		__kernel_build_time);
+	
+	cpu_feature_init();
 
 	acpi_init();
 
@@ -77,13 +84,12 @@ void _start(void) {
 	/* Initialize the HPET timer */
 	hpet_init();
 
-	/* Initialize general timer functions */
-	timer_init();
+	scheduler_init();
+	struct thread* kinit = scheduler_new_kthread((void*)kinit_func, NULL, true);
+	scheduler_new_kthread(ktest_func, NULL, true);
 
 	/* Initialize multicore */
 	smp_init();
 
-	asm ("int $0x0");
-
-	for(;;) asm ("hlt");
+	halt();
 }

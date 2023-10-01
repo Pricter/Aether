@@ -30,15 +30,14 @@ void idt_set_gate(uint8_t num, void* handler, uint16_t selector, uint8_t flags, 
 
 uint8_t idt_allocate(void) {
 	static spinlock_t lock = SPINLOCK_ZERO;
-	
-	spinlock_acquire(&lock);
+	bool int_state = spinlock_acquire(&lock);
 
 	if(free_vector == 0xf0) {
 		panic("IDT Vectors exhauted\n", NULL);
 	}
 
 	uint8_t ret = free_vector++;
-	spinlock_release(&lock);
+	spinlock_release(&lock, int_state);
 	return ret;
 }
 
@@ -54,7 +53,7 @@ void __init idt_init(void) {
 	idtp.base  = (uintptr_t)&idt;
 
 	for(uint64_t i = 0; i < 256; i++) {
-		idt_set_gate(i, isrs[i], 0x28, 0x8e, 0);
+		idt_set_gate(i, isrs[i], 0x8, 0x8e, 0);
 	}
 
 	idt_reload();
@@ -70,7 +69,7 @@ void idt_reload(void) {
 
 void irq_install(irq_t irq, int index) {
 	irqs[index - 32] = irq;
-	kprintf("irq: Install IRQ %d to %p\n", index - 32, irqs[index - 32]);
+	kprintf("irq: Install IRQ %d to %p\n", index - 32, symbols_search((uintptr_t)irqs[index - 32]));
 }
 
 static void _exception(struct regs* r, const char* description) {
@@ -79,16 +78,16 @@ static void _exception(struct regs* r, const char* description) {
 	}
 }
 
-static void _handle_irq(struct regs* r, int irqIndex) {
+struct regs* _handle_irq(struct regs* r, int irqIndex) {
 	irq_t handler = irqs[irqIndex];
 	if(!handler) {
 		panic("Received IRQ without handler", r);
 	}
-	handler(r);
+	return handler(r);
 }
 
 #define EXC(i, n) case i: _exception(r, n); break;
-#define IRQ(i) case i: _handle_irq(r, i - 32); break;
+#define IRQ(i) case i: return _handle_irq(r, i - 32);
 
 struct regs* isr_handler_inner(struct regs* r) {
 	switch (r->int_no) {
@@ -103,7 +102,7 @@ struct regs* isr_handler_inner(struct regs* r) {
 		EXC(11, "segment not present")
 		EXC(12, "stack-segment fault")
 		case 13: panic("General protection fault", r); break;
-		EXC(14, "page fault") // TODO: Make a handler
+		case 14: panic("page fault", r); break;
 		EXC(16, "floating point exception")
 		EXC(17, "alignment check")
 		EXC(18, "machine check")

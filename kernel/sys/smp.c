@@ -4,7 +4,6 @@
 #include <kernel/kprintf.h>
 #include <kernel/mmu.h>
 #include <kernel/cpu.h>
-#include <kernel/gdt.h>
 #include <kernel/int.h>
 #include <kernel/macros.h>
 #include <kernel/cpufeature.h>
@@ -26,12 +25,11 @@ static uint64_t initialized = 0;
 /* Local core list to keep track of cores */
 core_t *cpu_core_local = NULL;
 
-extern void lapic_irq_handler(struct regs*);
+extern struct regs* lapic_irq_handler(struct regs*);
 extern void lapic_init(void);
+extern void gdt_reload();
 
 bool lapic_initialized = false;
-
-static int *x = 0;
 
 void core_start(struct limine_smp_info *core) {
 	core_t *core_local = (core_t*)core->extra_argument;
@@ -39,6 +37,7 @@ void core_start(struct limine_smp_info *core) {
 	/* Set the struct fields to their appropriate values */
 	core_local->lapic_id = core->lapic_id;
 	core_local->self = core_local;
+	core_local->current = idleThread;
 	set_gs_register(core_local);
 
 	/* Load gdt in the core */
@@ -52,17 +51,15 @@ void core_start(struct limine_smp_info *core) {
 
 	/* Initialize LAPIC */
 	static spinlock_t lock = SPINLOCK_ZERO;
+	bool int_state = spinlock_acquire(&lock);
 	if(!cpu_has_feature(CPU_FEATURE_APIC)) {
 		panic("LAPIC is not supported", NULL);
 	}
 
-	spinlock_acquire(&lock);
-	if(get_cpu_feature_value(CPU_FEATURE_APIC) == 1) {
-		lapic_init();
-		lapic_timer_calibrate(10000000);
-		lapic_initialized = true;
-	}
-	spinlock_release(&lock);
+	lapic_init();
+	lapic_timer_calibrate(10000000);
+	lapic_initialized = true;
+	spinlock_release(&lock, int_state);
 
 	kprintf("smp: Processor #%ld online\n", core_local->lapic_id);
 
@@ -70,9 +67,9 @@ void core_start(struct limine_smp_info *core) {
 	initialized++;
 
 	/* Exiting from this causes a triple fault */
-	if(core_local->bsp != 1) {
+	if(core_local->bsp != true) {
 		enable_interrupts();
-		for(;;) asm ("hlt");
+		asm volatile ("1: hlt; jmp 1b");
 	}
 }
 

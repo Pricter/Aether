@@ -31,10 +31,9 @@ void __init lapic_timer_calibrate(uint64_t ns) {
 	lapic_write(LAPIC_REG_TIMER_INITCNT, ticksIn10ms);
 }
 
-void lapic_irq_handler(struct regs* r) {
-	// core_t *core = get_gs_register();
-	// kprintf("LAPIC INTERRUPT %lu\n", core->lapic_id);
+struct regs* lapic_irq_handler(struct regs* r) {
 	lapic_write(LAPIC_REG_EOI, LAPIC_EOI_ACK);
+	return schedule(r);
 }
 
 void lapic_issue_ipi(uint16_t core, uint8_t vector, uint8_t shorthand, uint8_t delivery) {

@@ -59,7 +59,6 @@ $ dd if=jeff.iso of=/dev/sdx
 ## TODO
 - [x] Memory management
 - [x] PIT Timer
-- [x] Doxygen
 - [x] Undefined Behaviour Sanitizer
 - [x] HPET Timer<br>
 - [x] LAPIC Timer
@@ -73,6 +72,7 @@ $ dd if=jeff.iso of=/dev/sdx
 - [ ] tmpfs
 - [ ] Disk driver
 - [ ] Any good file system
+- [ ] Integrate DWARF in stacktrace
 - [ ] USB driver
 - [ ] USB keyboard / mouse
 - [ ] Seperate init phase and later phase
@@ -80,5 +80,10 @@ $ dd if=jeff.iso of=/dev/sdx
 ## Other notes:
 - The kernel crashes if there is not enough memory instead of using a page file
 - The kernel finds the functions defined itself by using the kernel_file feature
+
+## Vendors
+- [pt.py](https://github.com/martinradev/gdb-pt-dump) for gdb
+- [Flanterm](https://github.com/mintsuki/flanterm) as terminal
+- [printf](https://github.com/eyalroz/printf) as printf implementation
 
 ## Problems

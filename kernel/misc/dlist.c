@@ -2,6 +2,7 @@
 #include <memory.h>
 #include <kernel/mmu.h>
 #include <kernel/kprintf.h>
+#include <kernel/scheduler.h>
 
 node_t* dlist_create_empty() {
     node_t* head = (node_t*)malloc(sizeof(node_t));
@@ -26,7 +27,6 @@ uint64_t dlist_get_length(node_t* head) {
 void dlist_push(node_t* head, void* value) {
     node_t* new_node = (node_t*)malloc(sizeof(node_t));
     if (new_node) {
-        new_node->previous = head;
         new_node->value = value;
         new_node->next = NULL;
 
@@ -37,6 +37,7 @@ void dlist_push(node_t* head, void* value) {
         }
 
         current->next = new_node;
+		new_node->previous = current;
     }
 }
 
@@ -96,21 +97,22 @@ node_t* dlist_pop_at(node_t* head, uint64_t index) {
         return NULL;
     }
 
-    if (index == 0) {
+    if (index == (length - 1)) {
         return dlist_pop(head);
     } else {
         node_t* current = head->next;
-        for (uint64_t i = 0; i < index - 1; i++) {
-            current = current->next;
+		if(index != 0) {
+			for (uint64_t i = 0; i < index - 1; i++) {
+            	current = current->next;
+        	}
+		}
+
+        current->previous->next = current->next;
+        if (current->next != NULL) {
+            current->next->previous = current->previous;
         }
 
-        node_t* popped_node = current->next;
-        current->next = popped_node->next;
-        if (popped_node->next != NULL) {
-            popped_node->next->previous = current;
-        }
-
-        return popped_node;
+        return current;
     }
 }
 
