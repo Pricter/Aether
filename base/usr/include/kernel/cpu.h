@@ -48,15 +48,17 @@ static inline uint64_t rdmsr(uint32_t msr) {
 }
 
 typedef struct core {
-	struct core* self;
-
 	/* Local APIC Id */
 	uint32_t lapic_id;
 
 	/* If our core is the one that ran start */
 	bool bsp;
 
+	/* Current thread */
 	struct thread* current;
+
+	/* Used when the waiting queue is exhausted */
+	struct thread* idleThread;
 } core_t;
 
 typedef struct cpu_info {

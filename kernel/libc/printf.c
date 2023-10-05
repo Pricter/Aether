@@ -96,6 +96,7 @@ void kprintf(const char* fmt, ...) {
 	va_start(args, fmt);
 
 	int length = vsnprintf(buffer, 1024, fmt, args);
+	va_end(args);
 	flanterm_write(context, buffer, length);
 
 #ifdef SERIAL_LOG
@@ -104,12 +105,10 @@ void kprintf(const char* fmt, ...) {
 	}
 #endif
 
-	va_end(args);
 	spinlock_release(&printlock, int_state);
 }
 
 void klog(const char* fmt, ...) {
-	disable_interrupts();
     bool int_state = spinlock_acquire(&printlock);
 
     char time_buffer[16];

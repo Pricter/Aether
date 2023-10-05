@@ -8,9 +8,14 @@
 #include <kernel/macros.h>
 #include <kernel/cpufeature.h>
 #include <kernel/apic.h>
+#include <kernel/scheduler.h>
 
 uint32_t bsp_lapic_id = 0;
 uint64_t coreCount = 0;
+
+void idleFunc(void) {
+	asm volatile ("1: hlt; jmp 1b");
+}
 
 /* Request limine for all cores information */
 static volatile struct limine_smp_request smp_request = {
@@ -29,17 +34,7 @@ extern struct regs* lapic_irq_handler(struct regs*);
 extern void lapic_init(void);
 extern void gdt_reload();
 
-bool lapic_initialized = false;
-
 void core_start(struct limine_smp_info *core) {
-	core_t *core_local = (core_t*)core->extra_argument;
-
-	/* Set the struct fields to their appropriate values */
-	core_local->lapic_id = core->lapic_id;
-	core_local->self = core_local;
-	core_local->current = idleThread;
-	set_gs_register(core_local);
-
 	/* Load gdt in the core */
 	gdt_reload();
 
@@ -49,17 +44,23 @@ void core_start(struct limine_smp_info *core) {
 	/* Load pagemap in the core */
 	mmu_switch_pagemap(mmu_kernel_pagemap);
 
+	core_t *core_local = (core_t*)core->extra_argument;
+	struct thread* _idleThread = scheduler_new_kthread(idleFunc, NULL, false);
+	core_local->idleThread = _idleThread;
+	_idleThread->core = core_local;
+
+	/* Set the struct fields to their appropriate values */
+	core_local->lapic_id = core->lapic_id;
+	core_local->current = _idleThread;
+	set_gs_register(_idleThread);
+
 	/* Initialize LAPIC */
-	static spinlock_t lock = SPINLOCK_ZERO;
-	bool int_state = spinlock_acquire(&lock);
 	if(!cpu_has_feature(CPU_FEATURE_APIC)) {
 		panic("LAPIC is not supported", NULL);
 	}
 
 	lapic_init();
 	lapic_timer_calibrate(10000000);
-	lapic_initialized = true;
-	spinlock_release(&lock, int_state);
 
 	kprintf("smp: Processor #%ld online\n", core_local->lapic_id);
 

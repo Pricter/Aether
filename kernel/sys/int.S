@@ -1,13 +1,20 @@
 .section .text
 .align 4
 
+.macro SWAPGS_CONDITIONAL
+        testq   $3, 24(%rsp)
+        jz      1f
+        swapgs
+1:
+.endm
+
 .extern isr_handler
 .type isr_handler, @function
 
-.global isr_common
 isr_common:
-    /* Save all registers */
-    swapgs
+	cld
+	SWAPGS_CONDITIONAL
+
     push %rax
     push %rbx
     push %rcx
@@ -23,8 +30,6 @@ isr_common:
     push %r13
     push %r14
     push %r15
-
-    cld
 
     /* Call the interrupt handler */
     mov %rsp, %rdi
@@ -47,7 +52,8 @@ isr_common:
     pop %rcx
     pop %rbx
     pop %rax
-    swapgs
+
+	SWAPGS_CONDITIONAL
     
     /* Cleanup error code and interrupt number */
     add $16, %rsp
@@ -62,8 +68,8 @@ _isr\index:
 .if 0x\index != 8 && 0x\index != 10 && 0x\index != 11 && 0x\index != 12 && 0x\index != 13 && 0x\index != 14 && 0x\index != 17 && 0x\index != 30
     pushq $0
 .endif
-    pushq $0x\index
-    jmp isr_common
+	pushq $0x\index
+	jmp isr_common
 .endm
 
 .macro ISRADDR index

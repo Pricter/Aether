@@ -3,7 +3,7 @@
 
 bool spinlock_acquire(spinlock_t *lock) {
 	bool int_state = interrupt_state();
-	if(int_state == true) disable_interrupts();
+	disable_interrupts();
 	volatile size_t deadlock_counter = 0;
     for (;;) {
         if (spinlock_test_and_acq(lock)) break;
@@ -18,7 +18,6 @@ bool spinlock_acquire(spinlock_t *lock) {
     return int_state;
 
 deadlock:
-	disable_interrupts();
 	halt();
 	return 0;
 }
@@ -26,5 +25,5 @@ deadlock:
 void spinlock_release(spinlock_t* lock, bool int_state) {
 	lock->last_acquirer = NULL;
 	__atomic_store_n(&lock->lock, 0, __ATOMIC_SEQ_CST);
-	if (int_state) enable_interrupts();
+	if (int_state == true) enable_interrupts();
 }

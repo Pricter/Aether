@@ -10,6 +10,7 @@
 struct process;
 
 struct thread {
+	struct thread* self;
 	struct thread* previous;
 	struct core* core;
 	struct process* spawner;
@@ -34,7 +35,6 @@ struct process {
 extern struct process* kernel_process;
 extern node_t* threadQueue;
 extern node_t* threadRunning;
-extern struct thread* idleThread;
 
 extern uint64_t pid;
 extern uint64_t tid;

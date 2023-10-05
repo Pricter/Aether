@@ -9,11 +9,6 @@ uint64_t tid;
 struct process* kernel_process;
 node_t* threadQueue;
 node_t* threadRunning;
-struct thread* idleThread;
-
-void idleFunc(void) {
-	asm volatile ("1: hlt; jmp 1b");
-}
 
 void scheduler_enqueue(struct thread* thread) {
 	dlist_push(threadQueue, thread);
@@ -62,6 +57,7 @@ struct thread* scheduler_new_kthread(void* pc, void* arg, bool enqueue) {
 	struct thread* thread = malloc(sizeof(struct thread));
 	struct regs* r = malloc(sizeof(struct regs));
 
+	thread->self = thread;
 	thread->core = NULL;
 	thread->previous = NULL;
 	thread->reachedStartingAddress = false;
@@ -113,28 +109,26 @@ void scheduler_init(void) {
 	kernel_process->threads = dlist_create_empty();
 	kernel_process->pid = pid++;
 	kernel_process->runningTime = 0;
-
-	idleThread = scheduler_new_kthread(idleFunc, NULL, false);
 }
 
-spinlock_t sched_get_lock;
+spinlock_t sched_lock;
 struct thread* scheduler_get_next_thread(void) {
-	bool int_state = spinlock_acquire(&sched_get_lock);
-
-	core_t* core = get_gs_register();
-	struct thread* current = core->current;
+	bool int_state = spinlock_acquire(&sched_lock);
+	struct thread* current = get_gs_register();
+	struct core* core = current->core;
 	if(dlist_get_length(threadQueue) == 0) {
 		current->previous = current;
 		current->core = core;
+		core->current = current;
 		current->state = THREAD_STATE_RUNNING;
-		spinlock_release(&sched_get_lock, int_state);
+		spinlock_release(&sched_lock, int_state);
 		return current;
 	}
 
 	struct thread* next = dlist_get(threadQueue, 0);
 	scheduler_dequeue(next);
 	scheduler_add_running(next);
-	if(current != idleThread) {
+	if(current != core->idleThread) {
 		scheduler_remove_running(current);
 		scheduler_enqueue(current);
 	}
@@ -144,19 +138,20 @@ struct thread* scheduler_get_next_thread(void) {
 	current->state = THREAD_STATE_WAITING;
 	next->state = THREAD_STATE_RUNNING;
 
-	spinlock_release(&sched_get_lock, int_state);
+	spinlock_release(&sched_lock, int_state);
 	return next;
 }
 
 struct regs* schedule(struct regs* r) {
+	struct thread* current = get_gs_register();
+	struct core* core = current->core;
+	if(current != core->idleThread) {
+		current->regs_ctx = r;
+	}
 	struct thread* next = scheduler_get_next_thread();
-	core_t* core = get_gs_register();
+	set_gs_register(next);
+	next->reachedStartingAddress = true;
 	next->runningTime += 10;
 	next->spawner->runningTime += 10;
-	if(next->previous->reachedStartingAddress == true) {
-		next->previous->regs_ctx = r;
-	}
-	next->previous->reachedStartingAddress = true;
-	kprintf("core #%lu thread switch\n", core->lapic_id);
 	return next->regs_ctx;
 }

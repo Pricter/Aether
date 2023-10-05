@@ -25,11 +25,15 @@ extern void hpet_init(void);
 extern void cpu_feature_init(void);
 
 void kinit_func(void) {
-	for(;;);
+	for(;;) {
+		kprintf("kinit on %lu\n", ((struct thread*)get_gs_register())->core->lapic_id);
+	}
 }
 
 void ktest_func(void) {
-	for(;;);
+	for(;;) {
+		kprintf("ktest on %lu\n", ((struct thread*)get_gs_register())->core->lapic_id);
+	}
 }
 
 /**
