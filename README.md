@@ -1,4 +1,4 @@
-# Jeff Kernel
+# Aether Kernel
 
 A Simple kernel for my own learning purposes
 
@@ -53,7 +53,7 @@ Dont use the `partitions` (entries with a number at the end) for this
 2. Build the iso using make in the project root folder
 3. Run the `dd` command (Double check if the device you noted is your usb):
 ```sh
-$ dd if=jeff.iso of=/dev/sdx
+$ dd if=aether.iso of=/dev/sdx
 ```
 
 ## TODO

@@ -1,4 +1,4 @@
-ISO_NAME = jeff
+ISO_NAME = aether
 
 .PHONY: all
 all: $(ISO_NAME).iso

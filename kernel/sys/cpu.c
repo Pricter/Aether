@@ -30,7 +30,7 @@ void panic(const char* desc, struct regs* r) {
 	// clear_screen();
 	// reset_cursor();
 	core_t* core = get_gs_register();
-	kprintf("\nJeff kernel panic! (%s) on core %lu\n", desc, core->lapic_id);
+	kprintf("\nAether kernel panic! (%s) on core %lu\n", desc, core->lapic_id);
 
 	if(r == NULL) goto _done;
 
