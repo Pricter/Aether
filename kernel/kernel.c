@@ -25,15 +25,7 @@ extern void hpet_init(void);
 extern void cpu_feature_init(void);
 
 void kinit_func(void) {
-	for(;;) {
-		kprintf("kinit on %lu\n", ((struct thread*)get_gs_register())->core->lapic_id);
-	}
-}
-
-void ktest_func(void) {
-	for(;;) {
-		kprintf("ktest on %lu\n", ((struct thread*)get_gs_register())->core->lapic_id);
-	}
+	for(;;);
 }
 
 /**
@@ -90,7 +82,6 @@ void _start(void) {
 
 	scheduler_init();
 	struct thread* kinit = scheduler_new_kthread((void*)kinit_func, NULL, true);
-	scheduler_new_kthread(ktest_func, NULL, true);
 
 	/* Initialize multicore */
 	smp_init();

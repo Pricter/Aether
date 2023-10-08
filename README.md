@@ -82,7 +82,6 @@ $ dd if=aether.iso of=/dev/sdx
 - The kernel finds the functions defined itself by using the kernel_file feature
 
 ## Vendors
-- [pt.py](https://github.com/martinradev/gdb-pt-dump) for gdb
 - [Flanterm](https://github.com/mintsuki/flanterm) as terminal
 - [printf](https://github.com/eyalroz/printf) as printf implementation
 

@@ -4,7 +4,7 @@ ISO_NAME = aether
 all: $(ISO_NAME).iso
 
 # General
-EMU_ARGS  = -M q35 -m 2G -boot d -D qlog.txt -d int -no-reboot -M smm=off
+EMU_ARGS  = -M q35 -m 2G -boot d -D qlog.txt -d int -no-reboot -M smm=off -smp 4
 
 # Host-related
 EMU_ARGS += -serial stdio -monitor unix:util/qemu-monitor-socket,server,nowait

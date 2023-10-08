@@ -75,7 +75,7 @@ void dlist_push_at(node_t* head, void* value, uint64_t index) {
             head->next = new_node;
         } else {
             node_t* current = head->next;
-            for (uint64_t i = 0; i < index - 1; i++) {
+            for (uint64_t i = 0; i < index; i++) {
                 current = current->next;
             }
 
@@ -102,7 +102,7 @@ node_t* dlist_pop_at(node_t* head, uint64_t index) {
     } else {
         node_t* current = head->next;
 		if(index != 0) {
-			for (uint64_t i = 0; i < index - 1; i++) {
+			for (uint64_t i = 0; i < index; i++) {
             	current = current->next;
         	}
 		}

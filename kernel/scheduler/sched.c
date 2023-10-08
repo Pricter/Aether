@@ -10,37 +10,48 @@ struct process* kernel_process;
 node_t* threadQueue;
 node_t* threadRunning;
 
+spinlock_t list_lock;
 void scheduler_enqueue(struct thread* thread) {
+	bool int_state = spinlock_acquire(&list_lock);
 	dlist_push(threadQueue, thread);
+	spinlock_release(&list_lock, int_state);
 }
 
-struct thread* scheduler_dequeue(struct thread* thread) {
+void scheduler_dequeue(struct thread* thread) {
+	bool int_state = spinlock_acquire(&list_lock);
 	for(uint64_t i = 0; i < dlist_get_length(threadQueue); i++) {
 		struct thread* toCheck = dlist_get(threadQueue, i);
-		if(toCheck->tid == thread->tid) {
+		if(toCheck == thread) {
 			dlist_pop_at(threadQueue, i);
-			return toCheck;
+			spinlock_release(&list_lock, int_state);
+			return;
 		}
 	}
+	spinlock_release(&list_lock, int_state);
 	if(thread != NULL) kprintf("Panic due to thread #%lu\n", thread->tid);
-	panic("Scheduler could not remove thread from waiting queue\n", NULL);
+	panic("Scheduler could not remove thread from waiting queue", NULL);
 	__builtin_unreachable();
 }
 
 void scheduler_add_running(struct thread* thread) {
+	bool int_state = spinlock_acquire(&list_lock);
 	dlist_push(threadRunning, thread);
+	spinlock_release(&list_lock, int_state);
 }
 
-struct thread* scheduler_remove_running(struct thread* thread) {
+void scheduler_remove_running(struct thread* thread) {
+	bool int_state = spinlock_acquire(&list_lock);
 	for(uint64_t i = 0; i < dlist_get_length(threadRunning); i++) {
 		struct thread* toCheck = dlist_get(threadRunning, i);
-		if(toCheck->tid == thread->tid) {
+		if(toCheck == thread) {
 			dlist_pop_at(threadRunning, i);
-			return toCheck;
+			spinlock_release(&list_lock, int_state);
+			return;
 		}
 	}
+	spinlock_release(&list_lock, int_state);
 	if(thread != NULL) kprintf("scheduler: Panic due to thread #%lu\n", thread->tid);
-	panic("Scheduler could not remove thread from running queue\n", NULL);
+	panic("Scheduler could not remove thread from running queue", NULL);
 	__builtin_unreachable();
 }
 
@@ -111,17 +122,10 @@ void scheduler_init(void) {
 	kernel_process->runningTime = 0;
 }
 
-spinlock_t sched_lock;
 struct thread* scheduler_get_next_thread(void) {
-	bool int_state = spinlock_acquire(&sched_lock);
 	struct thread* current = get_gs_register();
 	struct core* core = current->core;
 	if(dlist_get_length(threadQueue) == 0) {
-		current->previous = current;
-		current->core = core;
-		core->current = current;
-		current->state = THREAD_STATE_RUNNING;
-		spinlock_release(&sched_lock, int_state);
 		return current;
 	}
 
@@ -132,17 +136,16 @@ struct thread* scheduler_get_next_thread(void) {
 		scheduler_remove_running(current);
 		scheduler_enqueue(current);
 	}
-	next->previous = current;
-	next->core = core;
-	core->current = next;
-	current->state = THREAD_STATE_WAITING;
-	next->state = THREAD_STATE_RUNNING;
 
-	spinlock_release(&sched_lock, int_state);
 	return next;
 }
 
-struct regs* schedule(struct regs* r) {
+extern void switch_context(void* context);
+
+spinlock_t sched_lock;
+void schedule(struct regs* r) {
+	disable_interrupts();
+	bool int_state = spinlock_acquire(&sched_lock);
 	struct thread* current = get_gs_register();
 	struct core* core = current->core;
 	if(current != core->idleThread) {
@@ -153,5 +156,11 @@ struct regs* schedule(struct regs* r) {
 	next->reachedStartingAddress = true;
 	next->runningTime += 10;
 	next->spawner->runningTime += 10;
-	return next->regs_ctx;
+	next->previous = current;
+	next->core = core;
+	core->current = next;
+	current->state = THREAD_STATE_WAITING;
+	next->state = THREAD_STATE_RUNNING;
+	spinlock_release(&sched_lock, int_state);
+	switch_context(next->regs_ctx);
 }

@@ -33,7 +33,8 @@ void __init lapic_timer_calibrate(uint64_t ns) {
 
 struct regs* lapic_irq_handler(struct regs* r) {
 	lapic_write(LAPIC_REG_EOI, LAPIC_EOI_ACK);
-	return schedule(r);
+	schedule(r);
+	return r;
 }
 
 void lapic_issue_ipi(uint16_t core, uint8_t vector, uint8_t shorthand, uint8_t delivery) {

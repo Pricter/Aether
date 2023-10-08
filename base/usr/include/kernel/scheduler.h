@@ -40,12 +40,12 @@ extern uint64_t pid;
 extern uint64_t tid;
 
 void scheduler_enqueue(struct thread* thread);
-struct thread* scheduler_dequeue(struct thread* thread);
+void scheduler_dequeue(struct thread* thread);
 void scheduler_add_running(struct thread* thread);
-struct thread* scheduler_remove_running(struct thread* thread);
+void scheduler_remove_running(struct thread* thread);
 
 void scheduler_init(void);
 struct thread* scheduler_new_kthread(void* pc, void* arg, bool enqueue);
 struct thread* scheduler_get_next_thread(void);
 
-struct regs* schedule(struct regs* r);
+void schedule(struct regs* r);

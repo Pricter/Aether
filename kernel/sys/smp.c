@@ -30,7 +30,7 @@ static uint64_t initialized = 0;
 /* Local core list to keep track of cores */
 core_t *cpu_core_local = NULL;
 
-extern struct regs* lapic_irq_handler(struct regs*);
+extern struct regs* lapic_irq_handler(struct regs* r);
 extern void lapic_init(void);
 extern void gdt_reload();
 
