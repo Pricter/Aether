@@ -4,8 +4,8 @@ A Simple kernel for my own learning purposes
 
 ## Run
 To build the kernel use make in the kernel folder.<br>
-
 Using make in the project root folder will automatically also make a bootable iso.
+If the kernel does not compile using clang, dont be surprised. I develop using gcc but update to fix errors of clang after some major change
 
 ### Requirements
 The kernel requires:<br>
