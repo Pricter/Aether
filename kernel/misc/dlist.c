@@ -146,3 +146,15 @@ void* dlist_get(node_t* head, uint64_t index) {
 
     return current->value;
 }
+
+void dlist_remove_item(node_t* head, void* item) {
+	for(uint64_t i = 0; i < dlist_get_length(head); i++) {
+		void* toCheck = dlist_get(head, i);
+		if(toCheck == item) {
+			dlist_pop_at(head, i);
+			return;
+		}
+	}
+	kprintf("Kernel dlist_remove_item failed due to item %p\n", item);
+	__builtin_unreachable();
+}

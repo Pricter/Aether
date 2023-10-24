@@ -35,6 +35,7 @@ struct process {
 extern struct process* kernel_process;
 extern node_t* threadQueue;
 extern node_t* threadRunning;
+extern node_t* threadSleeping;
 
 extern uint64_t pid;
 extern uint64_t tid;
@@ -49,3 +50,5 @@ struct thread* scheduler_new_kthread(void* pc, void* arg, bool enqueue);
 struct thread* scheduler_get_next_thread(void);
 
 void schedule(struct regs* r);
+void thread_yield(bool exit);
+void thread_exit(void);

@@ -10,6 +10,7 @@
 #include <stdbool.h>
 #include <kernel/scheduler.h>
 #include <kernel/hpet.h>
+#include <kernel/apic.h>
 
 extern void debug_printf_init(void);
 extern void gdt_init(void);
@@ -25,7 +26,9 @@ extern void hpet_init(void);
 extern void cpu_feature_init(void);
 
 void kinit_func(void) {
-	for(;;);
+	for(;;) {
+		thread_yield(false);
+	}
 }
 
 /**

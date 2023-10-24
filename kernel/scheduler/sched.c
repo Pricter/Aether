@@ -3,12 +3,14 @@
 #include <kernel/mmu.h>
 #include <kernel/cpu.h>
 #include <kernel/kprintf.h>
+#include <kernel/apic.h>
 
 uint64_t pid;
 uint64_t tid;
 struct process* kernel_process;
 node_t* threadQueue;
 node_t* threadRunning;
+node_t* threadSleeping;
 
 spinlock_t list_lock;
 void scheduler_enqueue(struct thread* thread) {
@@ -19,18 +21,8 @@ void scheduler_enqueue(struct thread* thread) {
 
 void scheduler_dequeue(struct thread* thread) {
 	bool int_state = spinlock_acquire(&list_lock);
-	for(uint64_t i = 0; i < dlist_get_length(threadQueue); i++) {
-		struct thread* toCheck = dlist_get(threadQueue, i);
-		if(toCheck == thread) {
-			dlist_pop_at(threadQueue, i);
-			spinlock_release(&list_lock, int_state);
-			return;
-		}
-	}
+	dlist_remove_item(threadQueue, thread);
 	spinlock_release(&list_lock, int_state);
-	if(thread != NULL) kprintf("Panic due to thread #%lu\n", thread->tid);
-	panic("Scheduler could not remove thread from waiting queue", NULL);
-	__builtin_unreachable();
 }
 
 void scheduler_add_running(struct thread* thread) {
@@ -41,18 +33,8 @@ void scheduler_add_running(struct thread* thread) {
 
 void scheduler_remove_running(struct thread* thread) {
 	bool int_state = spinlock_acquire(&list_lock);
-	for(uint64_t i = 0; i < dlist_get_length(threadRunning); i++) {
-		struct thread* toCheck = dlist_get(threadRunning, i);
-		if(toCheck == thread) {
-			dlist_pop_at(threadRunning, i);
-			spinlock_release(&list_lock, int_state);
-			return;
-		}
-	}
+	dlist_remove_item(threadRunning, thread);
 	spinlock_release(&list_lock, int_state);
-	if(thread != NULL) kprintf("scheduler: Panic due to thread #%lu\n", thread->tid);
-	panic("Scheduler could not remove thread from running queue", NULL);
-	__builtin_unreachable();
 }
 
 #define KERNEL_STACK_SIZE 0x1000 * 10
@@ -149,13 +131,16 @@ void schedule(struct regs* r) {
 	struct thread* current = get_gs_register();
 	struct core* core = current->core;
 	if(current != core->idleThread) {
+		// Time represented in us
+		current->runningTime += 10000;
+		current->spawner->runningTime += 10000;
+	}
+	if(current != core->idleThread) {
 		current->regs_ctx = r;
 	}
 	struct thread* next = scheduler_get_next_thread();
 	set_gs_register(next);
 	next->reachedStartingAddress = true;
-	next->runningTime += 10;
-	next->spawner->runningTime += 10;
 	next->previous = current;
 	next->core = core;
 	core->current = next;
@@ -163,4 +148,23 @@ void schedule(struct regs* r) {
 	next->state = THREAD_STATE_RUNNING;
 	spinlock_release(&sched_lock, int_state);
 	switch_context(next->regs_ctx);
+}
+
+void thread_yield(bool exit) {
+	struct thread* thread = get_gs_register();
+	struct core* core = thread->core;
+	core->current = core->idleThread;
+	core->idleThread->previous = thread;
+	thread->state = THREAD_STATE_WAITING;
+	set_gs_register(core->idleThread);
+	scheduler_remove_running(thread);
+	if(exit == true) {
+		free(thread);
+	} else {
+		scheduler_enqueue(thread);
+		uint64_t passed_time = (lapic_get_current_count() * 1000000) / lapic_get_frequency();
+		thread->runningTime += passed_time;
+		kprintf("thread #%lu yield after %lu us\n", thread->tid, thread->runningTime);
+	}
+	schedule(NULL);
 }

@@ -17,3 +17,4 @@ node_t* dlist_pop_at(node_t* head, uint64_t index);
 void dlist_destroy_item(node_t* head, uint64_t index);
 void dlist_destroy_array(node_t* head);
 void* dlist_get(node_t* head, uint64_t index);
+void dlist_remove_item(node_t* head, void* item);

@@ -8,33 +8,40 @@
 #include <kernel/int.h>
 #include <kernel/kprintf.h>
 
-#define LAPIC_REG_SPURIOUS 0xf0
-#define LAPIC_REG_EOI 0xb0 /* End of interrupt */
-#define LAPIC_EOI_ACK 0x00 /* EOI Acknowledge */ 
-#define LAPIC_REG_TIMER_INITCNT 0x380 /* Initial Count register */
-#define LAPIC_REG_LVT_TIMER 0x320
-#define LAPIC_REG_TIMER_DIV 0x3e0
-#define LAPIC_REG_TIMER_CURCNT 0x390
-#define LAPIC_TIMER_PERIODIC 0x20000
-#define LAPIC_ICR_LOW 0x300
-#define LAPIC_ICR_HIGH 0x310
-
+uint64_t frequency = 0;
+uint64_t kernel_ticks = 0;
+uint32_t ticksIn10ms = 0;
 void __init lapic_timer_calibrate(uint64_t ns) {
 	lapic_write(LAPIC_REG_TIMER_DIV, 0x3);
 	lapic_write(LAPIC_REG_TIMER_INITCNT, 0xFFFFFFFF);
 
 	hpet_sleep(ns);
-	uint32_t ticksIn10ms = 0xFFFFFFFF - lapic_read(LAPIC_REG_TIMER_CURCNT);
+	ticksIn10ms = 0xFFFFFFFF - lapic_read(LAPIC_REG_TIMER_CURCNT);
 
 	lapic_write(LAPIC_REG_LVT_TIMER, 32 | LAPIC_TIMER_PERIODIC);
 	lapic_write(LAPIC_REG_TIMER_DIV, 0x3);
 	lapic_write(LAPIC_REG_TIMER_INITCNT, ticksIn10ms);
+
+	frequency = ticksIn10ms * 1000;
 }
 
 struct regs* lapic_irq_handler(struct regs* r) {
+	kernel_ticks += ticksIn10ms;
 	lapic_write(LAPIC_REG_EOI, LAPIC_EOI_ACK);
 	schedule(r);
 	return r;
+}
+
+uint32_t lapic_get_current_count() {
+	return lapic_read(LAPIC_REG_TIMER_CURCNT);
+}
+
+uint64_t lapic_get_frequency() {
+	return frequency;
+}
+
+uint64_t get_kernel_ticks(void) {
+	return kernel_ticks;
 }
 
 void lapic_issue_ipi(uint16_t core, uint8_t vector, uint8_t shorthand, uint8_t delivery) {

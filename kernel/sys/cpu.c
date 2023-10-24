@@ -26,9 +26,9 @@ bool paniced = false;
 void panic(const char* desc, struct regs* r) {
 	bool int_state = spinlock_acquire(&paniclock);
 
-	// kprintf("\033[0;41m");
-	// clear_screen();
-	// reset_cursor();
+	kprintf("\033[0;41m");
+	clear_screen();
+	reset_cursor();
 	struct thread* thread = get_gs_register();
 	struct core* core = thread->core;
 	kprintf("\nAether kernel panic! (%s) on core %lu, thread #%lu\n", desc, core->lapic_id, thread->tid);
@@ -57,7 +57,7 @@ void panic(const char* desc, struct regs* r) {
 
 _done:
 	stacktrace();
-	// kprintf("\033[0m");
+	kprintf("\033[0m");
 	lapic_issue_ipi(0, 99, 3, 0);
 	spinlock_release(&paniclock, int_state);
 	fatal();
