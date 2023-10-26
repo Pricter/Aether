@@ -301,7 +301,7 @@ void mmu_map_page(pagemap_t* pagemap, uintptr_t virt, uintptr_t phys, uint64_t f
 	pt[pt_index] = phys | flags;
 }
 
-void clean_reclaimable_memory(void) {
+uint64_t clean_reclaimable_memory(void) {
 	/* Check if the bootloader returns a memmap, if not catch fire */
     struct limine_memmap_response* response = memmap_request.response;
     if(response == NULL || response->entry_count == 0) {
@@ -310,18 +310,21 @@ void clean_reclaimable_memory(void) {
         for(;;) asm ("hlt");
     }
 
+	uint64_t cleared = 0;
     struct limine_memmap_entry** entries = response->entries;
 
     for(uint64_t i = 0; i < response->entry_count; i++) {
         struct limine_memmap_entry* entry = entries[i];
 
         if(entry->type == LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE) {
-			klog("Reclaiming memory entry %p", entry->base);
 			for(uint64_t page = entry->base; page < entry->base + entry->length; page += 4096) {
 				mmu_frame_clear(page);
 			}
+			cleared += entry->length;
+			kprintf("mmu: Reclaimed memory entry %p - %p %lu\n", entry->base, entry->base + entry->length, entry->length);
 		}
     }
+	return cleared;
 }
 
 /**

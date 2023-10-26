@@ -26,16 +26,16 @@ extern void hpet_init(void);
 extern void cpu_feature_init(void);
 
 void kinit_func(void) {
-	for(;;) {
-		thread_yield(false);
-	}
+	kprintf("Reclaimed a total of %lu bytes\n", clean_reclaimable_memory());
+	halt();
 }
 
 /**
  * The kernel start function. The kernel begins executing from
  * this function, this is called by the limine bootloader.
  * 
- * It prints the kernel information and initializes the kernel
+ * It prints the kernel information and initializes the kernel uptil the scheduler
+ * when a kinit thread is started which finished the initialization
 */
 void _start(void) {
 	/* Initialize memory */

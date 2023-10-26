@@ -11,12 +11,10 @@ struct process;
 
 struct thread {
 	struct thread* self;
-	struct thread* previous;
 	struct core* core;
 	struct process* spawner;
 	void* startingAddress;
 	bool reachedStartingAddress;
-	struct thread* siblings; /* Includes self */
 	struct regs* regs_ctx;
 	uint16_t state;
 	uint64_t runningTime;
@@ -50,5 +48,3 @@ struct thread* scheduler_new_kthread(void* pc, void* arg, bool enqueue);
 struct thread* scheduler_get_next_thread(void);
 
 void schedule(struct regs* r);
-void thread_yield(bool exit);
-void thread_exit(void);

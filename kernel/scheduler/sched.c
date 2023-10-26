@@ -52,7 +52,6 @@ struct thread* scheduler_new_kthread(void* pc, void* arg, bool enqueue) {
 
 	thread->self = thread;
 	thread->core = NULL;
-	thread->previous = NULL;
 	thread->reachedStartingAddress = false;
 	thread->regs_ctx = r;
 	thread->runningTime = 0;
@@ -141,30 +140,10 @@ void schedule(struct regs* r) {
 	struct thread* next = scheduler_get_next_thread();
 	set_gs_register(next);
 	next->reachedStartingAddress = true;
-	next->previous = current;
 	next->core = core;
 	core->current = next;
 	current->state = THREAD_STATE_WAITING;
 	next->state = THREAD_STATE_RUNNING;
 	spinlock_release(&sched_lock, int_state);
 	switch_context(next->regs_ctx);
-}
-
-void thread_yield(bool exit) {
-	struct thread* thread = get_gs_register();
-	struct core* core = thread->core;
-	core->current = core->idleThread;
-	core->idleThread->previous = thread;
-	thread->state = THREAD_STATE_WAITING;
-	set_gs_register(core->idleThread);
-	scheduler_remove_running(thread);
-	if(exit == true) {
-		free(thread);
-	} else {
-		scheduler_enqueue(thread);
-		uint64_t passed_time = (lapic_get_current_count() * 1000000) / lapic_get_frequency();
-		thread->runningTime += passed_time;
-		kprintf("thread #%lu yield after %lu us\n", thread->tid, thread->runningTime);
-	}
-	schedule(NULL);
 }

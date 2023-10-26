@@ -6,7 +6,6 @@
 void printf_init(void);
 
 void kprintf(const char* fmt, ...);
-void klog(const char* fmt, ...);
 
 static inline void clear_screen(void) {
 	kprintf("\033[2J");
