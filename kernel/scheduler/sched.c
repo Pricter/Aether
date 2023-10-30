@@ -41,7 +41,9 @@ void scheduler_remove_running(struct thread* thread) {
 #define THREAD_STATE_WAITING 0x1
 #define THREAD_STATE_UNDEFINED 0x2
 #define THREAD_STATE_RUNNING 0x3
+#define THREAD_STATE_EXITED 0x4
 
+void _thread_continue(void);
 struct thread* scheduler_new_kthread(void* pc, void* arg, bool enqueue) {
 	if(pc == NULL) {
 		kprintf("scheduler: NULL Passed to `pc` in scheduler_new_kthread");
@@ -49,11 +51,16 @@ struct thread* scheduler_new_kthread(void* pc, void* arg, bool enqueue) {
 	}
 	struct thread* thread = malloc(sizeof(struct thread));
 	struct regs* r = malloc(sizeof(struct regs));
+	struct Context* c = malloc(sizeof(struct Context));
+	
+	c->rip = (uint64_t)_thread_continue;
+	c->rbx = (uint64_t)r;
 
 	thread->self = thread;
 	thread->core = NULL;
 	thread->reachedStartingAddress = false;
 	thread->regs_ctx = r;
+	thread->context = c;
 	thread->runningTime = 0;
 	thread->spawner = kernel_process;
 	thread->startingAddress = pc;
@@ -90,17 +97,22 @@ void scheduler_destroy_thread(struct thread* thread) {
 	free(thread);
 }
 
+struct process* scheduler_new_process(char* name, pagemap_t* pagemap, struct process* parent) {
+	struct process* new = malloc(sizeof(struct process));
+	new->name = name;
+	new->pagemap = pagemap;
+	new->parent = parent;
+	new->threads = dlist_create_empty();
+	new->pid = pid++;
+	new->runningTime = 0;
+	return new;
+}
+
 void scheduler_init(void) {
 	threadQueue = dlist_create_empty();
 	threadRunning = dlist_create_empty();
 
-	kernel_process = malloc(sizeof(struct process));
-	kernel_process->name = "Kernel Process";
-	kernel_process->pagemap = mmu_kernel_pagemap;
-	kernel_process->parent = NULL;
-	kernel_process->threads = dlist_create_empty();
-	kernel_process->pid = pid++;
-	kernel_process->runningTime = 0;
+	kernel_process = scheduler_new_process("Kernel process", mmu_kernel_pagemap, NULL);
 }
 
 struct thread* scheduler_get_next_thread(void) {
@@ -110,7 +122,15 @@ struct thread* scheduler_get_next_thread(void) {
 		return current;
 	}
 
-	struct thread* next = dlist_get(threadQueue, 0);
+	struct thread* first = dlist_get(threadQueue, 0);
+	struct thread* next = first;
+	for(uint64_t i = 0; i < dlist_get_length(threadQueue); i++) {
+		if(next->state == THREAD_STATE_WAITING) break;
+		next = dlist_get(threadQueue, i);
+	}
+	if(next->state != THREAD_STATE_WAITING) {
+		return current;
+	}
 	scheduler_dequeue(next);
 	scheduler_add_running(next);
 	if(current != core->idleThread) {
@@ -121,7 +141,7 @@ struct thread* scheduler_get_next_thread(void) {
 	return next;
 }
 
-extern void switch_context(void* context);
+void _switch(struct Context** old, struct Context* new);
 
 spinlock_t sched_lock;
 void schedule(struct regs* r) {
@@ -136,6 +156,7 @@ void schedule(struct regs* r) {
 	}
 	if(current != core->idleThread) {
 		current->regs_ctx = r;
+		current->context->rbx = (uint64_t)r;
 	}
 	struct thread* next = scheduler_get_next_thread();
 	set_gs_register(next);
@@ -145,5 +166,5 @@ void schedule(struct regs* r) {
 	current->state = THREAD_STATE_WAITING;
 	next->state = THREAD_STATE_RUNNING;
 	spinlock_release(&sched_lock, int_state);
-	switch_context(next->regs_ctx);
+	_switch(&current->context, next->context);
 }

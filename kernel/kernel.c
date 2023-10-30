@@ -84,10 +84,11 @@ void _start(void) {
 	hpet_init();
 
 	scheduler_init();
-	struct thread* kinit = scheduler_new_kthread((void*)kinit_func, NULL, true);
 
 	/* Initialize multicore */
 	smp_init();
+
+	struct thread* kinit = scheduler_new_kthread((void*)kinit_func, NULL, true);
 
 	halt();
 }

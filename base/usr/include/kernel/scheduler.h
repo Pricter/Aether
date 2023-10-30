@@ -16,6 +16,7 @@ struct thread {
 	void* startingAddress;
 	bool reachedStartingAddress;
 	struct regs* regs_ctx;
+	struct Context* context;
 	uint16_t state;
 	uint64_t runningTime;
 	uint64_t tid;
@@ -44,7 +45,10 @@ void scheduler_add_running(struct thread* thread);
 void scheduler_remove_running(struct thread* thread);
 
 void scheduler_init(void);
-struct thread* scheduler_new_kthread(void* pc, void* arg, bool enqueue);
 struct thread* scheduler_get_next_thread(void);
 
+struct thread* scheduler_new_kthread(void* pc, void* arg, bool enqueue);
+struct process* scheduler_new_process(char* name, pagemap_t* pagemap, struct process* parent);
+
 void schedule(struct regs* r);
+void thread_exit();

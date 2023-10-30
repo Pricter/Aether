@@ -5,10 +5,34 @@
 1:
 .endm
 
-.global switch_context
-.type switch_context, @function
-switch_context:
-	mov %rdi, %rsp
+.global _switch
+.type _switch, @function
+_switch:
+	test %rdi, %rdi
+	jz 1f
+	sub $0x30, %rsp
+	mov %rbx, 0x00(%rsp)
+	mov %rbp, 0x08(%rsp)
+	mov %r12, 0x10(%rsp)
+    mov %r13, 0x18(%rsp)
+    mov %r14, 0x20(%rsp)
+    mov %r15, 0x28(%rsp)
+    mov %rsp, (%rdi)
+	1:
+	mov %rsi, %rsp
+	mov 0x00(%rsp), %rbx
+	mov 0x08(%rsp), %rbp
+	mov 0x10(%rsp), %r12
+	mov 0x18(%rsp), %r13
+	mov 0x20(%rsp), %r14
+	mov 0x28(%rsp), %r15
+	add $0x30, %rsp
+	ret
+
+.global _thread_continue
+.type _thread_continue, @function
+_thread_continue:
+	mov %rbx, %rsp
 
 	pop %r15
     pop %r14
@@ -25,11 +49,6 @@ switch_context:
     pop %rcx
     pop %rbx
     pop %rax
-
 	SWAPGS_CONDITIONAL
-    
-    /* Cleanup error code and interrupt number */
     add $16, %rsp
-
-    /* Return from interrupt */
     iretq

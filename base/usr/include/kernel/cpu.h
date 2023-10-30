@@ -110,6 +110,10 @@ struct regs {
 	uintptr_t rip, cs, rflags, rsp, ss;
 };
 
+struct Context {
+	uint64_t rbx, rbp, r12, r13, r14, r15, rip;
+};
+
 void panic(const char* desc, struct regs* r);
 
 static void fatal(void) {
