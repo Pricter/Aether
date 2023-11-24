@@ -27,7 +27,9 @@ extern void cpu_feature_init(void);
 
 void kinit_func(void) {
 	kprintf("Reclaimed a total of %lu bytes\n", clean_reclaimable_memory());
-	halt();
+	for(;;) {
+		kprintf("x");
+	}
 }
 
 /**
@@ -88,7 +90,7 @@ void _start(void) {
 	/* Initialize multicore */
 	smp_init();
 
-	struct thread* kinit = scheduler_new_kthread((void*)kinit_func, NULL, true);
+	struct thread* kinit = scheduler_new_kthread((void*)kinit_func, true);
 
 	halt();
 }

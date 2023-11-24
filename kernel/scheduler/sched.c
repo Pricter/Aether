@@ -44,7 +44,7 @@ void scheduler_remove_running(struct thread* thread) {
 #define THREAD_STATE_EXITED 0x4
 
 void _thread_continue(void);
-struct thread* scheduler_new_kthread(void* pc, void* arg, bool enqueue) {
+struct thread* scheduler_new_kthread(void* pc, bool enqueue) {
 	if(pc == NULL) {
 		kprintf("scheduler: NULL Passed to `pc` in scheduler_new_kthread");
 		return NULL;
@@ -68,7 +68,6 @@ struct thread* scheduler_new_kthread(void* pc, void* arg, bool enqueue) {
 	thread->state = enqueue == true ? THREAD_STATE_WAITING : THREAD_STATE_UNDEFINED;
 	
 	r->rip = (uintptr_t)thread->startingAddress;
-	r->rdi = (uintptr_t)arg;
 	r->rsp = mmu_request_frames(KERNEL_STACK_SIZE / 10) + HHDM_HIGHER_HALF;
 	r->cs = 0x8;
 	r->ss = 0x10;

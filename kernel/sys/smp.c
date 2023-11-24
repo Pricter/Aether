@@ -45,7 +45,7 @@ void core_start(struct limine_smp_info *core) {
 	mmu_switch_pagemap(mmu_kernel_pagemap);
 
 	core_t *core_local = (core_t*)core->extra_argument;
-	struct thread* _idleThread = scheduler_new_kthread(idleFunc, NULL, false);
+	struct thread* _idleThread = scheduler_new_kthread(idleFunc, false);
 	core_local->idleThread = _idleThread;
 	_idleThread->core = core_local;
 

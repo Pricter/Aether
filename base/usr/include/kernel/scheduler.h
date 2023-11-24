@@ -47,7 +47,7 @@ void scheduler_remove_running(struct thread* thread);
 void scheduler_init(void);
 struct thread* scheduler_get_next_thread(void);
 
-struct thread* scheduler_new_kthread(void* pc, void* arg, bool enqueue);
+struct thread* scheduler_new_kthread(void* pc, bool enqueue);
 struct process* scheduler_new_process(char* name, pagemap_t* pagemap, struct process* parent);
 
 void schedule(struct regs* r);
