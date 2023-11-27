@@ -44,7 +44,10 @@ void scheduler_remove_running(struct thread* thread) {
 #define THREAD_STATE_EXITED 0x4
 
 void _thread_continue(void);
+
+spinlock_t creation_lock;
 struct thread* scheduler_new_kthread(void* pc, bool enqueue) {
+	bool int_state = spinlock_acquire(&creation_lock);
 	if(pc == NULL) {
 		kprintf("scheduler: NULL Passed to `pc` in scheduler_new_kthread");
 		return NULL;
@@ -77,6 +80,7 @@ struct thread* scheduler_new_kthread(void* pc, bool enqueue) {
 
 	if(enqueue == true) scheduler_enqueue(thread);
 
+	spinlock_release(&creation_lock, int_state);
 	return thread;
 }
 
