@@ -71,7 +71,7 @@ struct thread* scheduler_new_kthread(void* pc, bool enqueue) {
 	thread->state = enqueue == true ? THREAD_STATE_WAITING : THREAD_STATE_UNDEFINED;
 	
 	r->rip = (uintptr_t)thread->startingAddress;
-	r->rsp = mmu_request_frames(KERNEL_STACK_SIZE / 10) + HHDM_HIGHER_HALF;
+	r->rsp = mmu_request_frames(KERNEL_STACK_SIZE / PAGE_SIZE) + HHDM_HIGHER_HALF + KERNEL_STACK_SIZE;
 	r->cs = 0x8;
 	r->ss = 0x10;
 	r->rflags = 0x246;
