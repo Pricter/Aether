@@ -8,25 +8,20 @@
 .global _switch
 .type _switch, @function
 _switch:
-	test %rdi, %rdi
-	jz 1f
-	sub $0x30, %rsp
-	mov %rbx, 0x00(%rsp)
-	mov %rbp, 0x08(%rsp)
-	mov %r12, 0x10(%rsp)
-    mov %r13, 0x18(%rsp)
-    mov %r14, 0x20(%rsp)
-    mov %r15, 0x28(%rsp)
-    mov %rsp, (%rdi)
-	1:
+	push %r15
+	push %r14
+	push %r13
+	push %r12
+	push %rbp
+	push %rbx
+	mov %rsp, (%rdi)
 	mov %rsi, %rsp
-	mov 0x00(%rsp), %rbx
-	mov 0x08(%rsp), %rbp
-	mov 0x10(%rsp), %r12
-	mov 0x18(%rsp), %r13
-	mov 0x20(%rsp), %r14
-	mov 0x28(%rsp), %r15
-	add $0x30, %rsp
+	pop %rbx
+	pop %rbp
+	pop %r12
+	pop %r13
+	pop %r14
+	pop %r15
 	ret
 
 .global _thread_continue

@@ -45,9 +45,9 @@ void scheduler_remove_running(struct thread* thread) {
 
 void _thread_continue(void);
 
-spinlock_t creation_lock;
+spinlock_t manage_lock;
 struct thread* scheduler_new_kthread(void* pc, bool enqueue) {
-	bool int_state = spinlock_acquire(&creation_lock);
+	bool int_state = spinlock_acquire(&manage_lock);
 	if(pc == NULL) {
 		kprintf("scheduler: NULL Passed to `pc` in scheduler_new_kthread");
 		return NULL;
@@ -80,11 +80,12 @@ struct thread* scheduler_new_kthread(void* pc, bool enqueue) {
 
 	if(enqueue == true) scheduler_enqueue(thread);
 
-	spinlock_release(&creation_lock, int_state);
+	spinlock_release(&manage_lock, int_state);
 	return thread;
 }
 
 void scheduler_destroy_thread(struct thread* thread) {
+	bool int_state = spinlock_acquire(&manage_lock);
 	if(thread == NULL) {
 		kprintf("scheduler: NULL Passed to scheduler_destroy_thread\n");
 		return;
@@ -98,9 +99,11 @@ void scheduler_destroy_thread(struct thread* thread) {
 		panic("Scheduler does not know how to remove thread #%lu\n", NULL);
 	}
 	free(thread);
+	spinlock_release(&manage_lock, int_state);
 }
 
 struct process* scheduler_new_process(char* name, pagemap_t* pagemap, struct process* parent) {
+	bool int_state = spinlock_acquire(&manage_lock);
 	struct process* new = malloc(sizeof(struct process));
 	new->name = name;
 	new->pagemap = pagemap;
@@ -108,6 +111,7 @@ struct process* scheduler_new_process(char* name, pagemap_t* pagemap, struct pro
 	new->threads = dlist_create_empty();
 	new->pid = pid++;
 	new->runningTime = 0;
+	spinlock_release(&manage_lock, int_state);
 	return new;
 }
 
@@ -168,6 +172,10 @@ void schedule(struct regs* r) {
 	core->current = next;
 	current->state = THREAD_STATE_WAITING;
 	next->state = THREAD_STATE_RUNNING;
+	if(current->context == NULL || next->context == NULL) {
+		kprintf("Context passed to _switch is NULL, &current->context = %p, next->context = %p", &current->context, next->context);
+		panic("Context passed to _switch is NULL", NULL);
+	}
 	spinlock_release(&sched_lock, int_state);
 	_switch(&current->context, next->context);
 }
