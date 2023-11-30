@@ -8,6 +8,8 @@
 #include <kernel/cpu.h>
 #include <kernel/macros.h>
 
+spinlock_t mmu_lock = SPINLOCK_ZERO;
+
 /* Hangs the system */
 extern void fatal(void);
 
@@ -84,6 +86,7 @@ extern char data_start[], data_end[];
  * @param address the frame to set unused
 */
 void mmu_frame_clear(uintptr_t address) {
+	bool int_state = spinlock_acquire(&mmu_lock);
     /* Calculate the bitmap index */
     uint64_t index = address / 4096;
 
@@ -99,6 +102,7 @@ void mmu_frame_clear(uintptr_t address) {
         usedMemory -= 4096;
         freeMemory += 4096;
     }
+	spinlock_release(&mmu_lock, int_state);
 }
 
 /**
@@ -109,6 +113,7 @@ void mmu_frame_clear(uintptr_t address) {
  * @param address the frame to set used
 */
 void mmu_frame_set(uintptr_t address) {
+	bool int_state = spinlock_acquire(&mmu_lock);
     /* Calculate the bitmap index */
     uint64_t index = address / 4096;
 
@@ -124,6 +129,7 @@ void mmu_frame_set(uintptr_t address) {
         usedMemory += 4096;
         freeMemory -= 4096;
     }
+	spinlock_release(&mmu_lock, int_state);
 }
 
 /**
@@ -134,6 +140,7 @@ void mmu_frame_set(uintptr_t address) {
  * @returns true if being used and false if free
 */
 bool mmu_test_frame(uintptr_t address) {
+	bool int_state = spinlock_acquire(&mmu_lock);
     uint64_t index = address / 4096;
 
     /* Check if the address is less than available memory */
@@ -141,9 +148,11 @@ bool mmu_test_frame(uintptr_t address) {
         uint64_t byteIndex = index / 8;
         uint8_t bitIndex = index % 8;
 
+		spinlock_release(&mmu_lock, int_state);
         /* Check if the bit tracking the page is set */
         return (bitmap[byteIndex] & (1 << bitIndex)) != 0;
     }
+	spinlock_release(&mmu_lock, int_state);
 	return false;
 }
 
@@ -220,9 +229,11 @@ uintptr_t mmu_request_frames(uint64_t num) {
  * @param pages The number of pages to free
 */
 void mmu_free_frames(void* addr, uint64_t pages) {
+	bool int_state = spinlock_acquire(&mmu_lock);
 	for(uint64_t i = 0; i < pages; i++) {
 		mmu_frame_clear((uintptr_t)((uintptr_t)addr + (i * 4096)));
 	}
+	spinlock_release(&mmu_lock, int_state);
 }
 
 /**
