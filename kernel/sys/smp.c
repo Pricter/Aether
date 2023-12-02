@@ -34,12 +34,15 @@ extern struct regs* lapic_irq_handler(struct regs* r);
 extern void lapic_init(void);
 extern void gdt_reload();
 
+spinlock_t lock = SPINLOCK_ZERO;
 void core_start(struct limine_smp_info *core) {
 	/* Load gdt in the core */
 	gdt_reload();
 
 	/* Load idt in the core */
 	idt_reload();
+
+	bool int_state = spinlock_acquire(&lock);
 
 	/* Load pagemap in the core */
 	mmu_switch_pagemap(mmu_kernel_pagemap);
@@ -66,6 +69,7 @@ void core_start(struct limine_smp_info *core) {
 
 	/* Add the initialized statement */
 	initialized++;
+	spinlock_release(&lock, int_state);
 
 	/* Exiting from this causes a triple fault */
 	if(core_local->bsp != true) {

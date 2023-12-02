@@ -53,16 +53,15 @@ struct thread* scheduler_new_kthread(void* pc, bool enqueue) {
 		return NULL;
 	}
 	struct thread* thread = malloc(sizeof(struct thread));
-	struct regs* r = malloc(sizeof(struct regs));
 	struct Context* c = malloc(sizeof(struct Context));
+	struct init_stack* init_stack = malloc(sizeof(struct init_stack));
 	
 	c->rip = (uint64_t)_thread_continue;
-	c->rbx = (uint64_t)r;
+	c->rbx = (uint64_t)init_stack;
 
 	thread->self = thread;
 	thread->core = NULL;
 	thread->reachedStartingAddress = false;
-	thread->regs_ctx = r;
 	thread->context = c;
 	thread->runningTime = 0;
 	thread->spawner = kernel_process;
@@ -70,11 +69,11 @@ struct thread* scheduler_new_kthread(void* pc, bool enqueue) {
 	thread->tid = tid++;
 	thread->state = enqueue == true ? THREAD_STATE_WAITING : THREAD_STATE_UNDEFINED;
 	
-	r->rip = (uintptr_t)thread->startingAddress;
-	r->rsp = mmu_request_frames(KERNEL_STACK_SIZE / PAGE_SIZE) + HHDM_HIGHER_HALF + KERNEL_STACK_SIZE;
-	r->cs = 0x8;
-	r->ss = 0x10;
-	r->rflags = 0x246;
+	init_stack->rip = (uintptr_t)thread->startingAddress;
+	init_stack->rsp = mmu_request_frames(KERNEL_STACK_SIZE / PAGE_SIZE) + HHDM_HIGHER_HALF + KERNEL_STACK_SIZE;
+	init_stack->cs = 0x8;
+	init_stack->ss = 0x10;
+	init_stack->rflags = 0x246;
 
 	dlist_push(thread->spawner->threads, thread);
 
@@ -151,7 +150,7 @@ struct thread* scheduler_get_next_thread(void) {
 void _switch(struct Context** old, struct Context* new);
 
 spinlock_t sched_lock;
-void schedule(struct regs* r) {
+void schedule() {
 	disable_interrupts();
 	bool int_state = spinlock_acquire(&sched_lock);
 	struct thread* current = get_gs_register();
@@ -160,10 +159,6 @@ void schedule(struct regs* r) {
 		// Time represented in us
 		current->runningTime += 10000;
 		current->spawner->runningTime += 10000;
-	}
-	if(current != core->idleThread) {
-		current->regs_ctx = r;
-		current->context->rbx = (uint64_t)r;
 	}
 	struct thread* next = scheduler_get_next_thread();
 	set_gs_register(next);

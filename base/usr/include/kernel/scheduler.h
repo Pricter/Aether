@@ -9,13 +9,17 @@
 
 struct process;
 
+struct init_stack {
+	uintptr_t rip, cs, rflags, rsp, ss;
+};
+
 struct thread {
 	struct thread* self;
 	struct core* core;
 	struct process* spawner;
 	void* startingAddress;
 	bool reachedStartingAddress;
-	struct regs* regs_ctx;
+	struct init_stack* init_stack;
 	struct Context* context;
 	uint16_t state;
 	uint64_t runningTime;
@@ -50,5 +54,5 @@ struct thread* scheduler_get_next_thread(void);
 struct thread* scheduler_new_kthread(void* pc, bool enqueue);
 struct process* scheduler_new_process(char* name, pagemap_t* pagemap, struct process* parent);
 
-void schedule(struct regs* r);
+void schedule();
 void thread_exit();
