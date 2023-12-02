@@ -63,13 +63,11 @@ struct thread* scheduler_new_kthread(void* pc, bool enqueue) {
 	thread->core = NULL;
 	thread->reachedStartingAddress = false;
 	thread->context = c;
-	thread->runningTime = 0;
 	thread->spawner = kernel_process;
-	thread->startingAddress = pc;
 	thread->tid = tid++;
 	thread->state = enqueue == true ? THREAD_STATE_WAITING : THREAD_STATE_UNDEFINED;
 	
-	init_stack->rip = (uintptr_t)thread->startingAddress;
+	init_stack->rip = (uintptr_t)pc;
 	init_stack->rsp = mmu_request_frames(KERNEL_STACK_SIZE / PAGE_SIZE) + HHDM_HIGHER_HALF + KERNEL_STACK_SIZE;
 	init_stack->cs = 0x8;
 	init_stack->ss = 0x10;
@@ -109,7 +107,6 @@ struct process* scheduler_new_process(char* name, pagemap_t* pagemap, struct pro
 	new->parent = parent;
 	new->threads = dlist_create_empty();
 	new->pid = pid++;
-	new->runningTime = 0;
 	spinlock_release(&manage_lock, int_state);
 	return new;
 }
@@ -149,17 +146,11 @@ struct thread* scheduler_get_next_thread(void) {
 
 void _switch(struct Context** old, struct Context* new);
 
-spinlock_t sched_lock;
+spinlock_t sched_lock = SPINLOCK_ZERO;
 void schedule() {
-	disable_interrupts();
 	bool int_state = spinlock_acquire(&sched_lock);
 	struct thread* current = get_gs_register();
 	struct core* core = current->core;
-	if(current != core->idleThread) {
-		// Time represented in us
-		current->runningTime += 10000;
-		current->spawner->runningTime += 10000;
-	}
 	struct thread* next = scheduler_get_next_thread();
 	set_gs_register(next);
 	next->reachedStartingAddress = true;
@@ -167,10 +158,6 @@ void schedule() {
 	core->current = next;
 	current->state = THREAD_STATE_WAITING;
 	next->state = THREAD_STATE_RUNNING;
-	if(current->context == NULL || next->context == NULL) {
-		kprintf("Context passed to _switch is NULL, &current->context = %p, next->context = %p", &current->context, next->context);
-		panic("Context passed to _switch is NULL", NULL);
-	}
 	spinlock_release(&sched_lock, int_state);
 	_switch(&current->context, next->context);
 }

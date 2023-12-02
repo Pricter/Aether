@@ -17,12 +17,10 @@ struct thread {
 	struct thread* self;
 	struct core* core;
 	struct process* spawner;
-	void* startingAddress;
 	bool reachedStartingAddress;
 	struct init_stack* init_stack;
 	struct Context* context;
 	uint16_t state;
-	uint64_t runningTime;
 	uint64_t tid;
 };
 
@@ -32,7 +30,6 @@ struct process {
 	node_t* threads;
 	struct process* parent;
 	pagemap_t* pagemap;
-	uint64_t runningTime;
 };
 
 extern struct process* kernel_process;

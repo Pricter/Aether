@@ -14,7 +14,6 @@ bool spinlock_acquire(spinlock_t *lock) {
         asm volatile ("pause");
 #endif
     }
-    lock->last_acquirer = __builtin_return_address(0);
     return int_state;
 
 deadlock:
@@ -23,7 +22,6 @@ deadlock:
 }
 
 void spinlock_release(spinlock_t* lock, bool int_state) {
-	lock->last_acquirer = NULL;
 	__atomic_store_n(&lock->lock, 0, __ATOMIC_SEQ_CST);
 	if (int_state == true) enable_interrupts();
 }
