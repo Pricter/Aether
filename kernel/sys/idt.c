@@ -115,14 +115,13 @@ struct regs* isr_handler_inner(struct regs* r) {
 
 		IRQ(32)
 		case 99: {
-			struct thread* thread = get_gs_register();
-			kprintf("Received halt signal on core %lu\n", thread->core->lapic_id);
+			kprintf("Received halt signal on core %lu\n", ((core_t*)get_gs_register())->lapic_id);
 			halt();
 		} break;
 
 		default: {
-			struct thread* thread = get_gs_register();
-			kprintf("int: Received Unexpected interrupt on core %lu, vector = %lu\n", thread->core->lapic_id, r->int_no);
+			core_t* core = get_gs_register();
+			kprintf("int: Received Unexpected interrupt on core %lu, vector = %lu\n", core->lapic_id, r->int_no);
 		} break;
 	}
 

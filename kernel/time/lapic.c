@@ -28,7 +28,6 @@ void __init lapic_timer_calibrate(uint64_t ns) {
 struct regs* lapic_irq_handler(struct regs* r) {
 	kernel_ticks += ticksIn10ms;
 	lapic_write(LAPIC_REG_EOI, LAPIC_EOI_ACK);
-	schedule();
 	return r;
 }
 

@@ -8,7 +8,6 @@
 #include <kernel/macros.h>
 #include <kernel/cpufeature.h>
 #include <kernel/apic.h>
-#include <kernel/scheduler.h>
 
 uint32_t bsp_lapic_id = 0;
 uint64_t coreCount = 0;
@@ -48,14 +47,10 @@ void core_start(struct limine_smp_info *core) {
 	mmu_switch_pagemap(mmu_kernel_pagemap);
 
 	core_t *core_local = (core_t*)core->extra_argument;
-	struct thread* _idleThread = scheduler_new_kthread(idleFunc, false);
-	core_local->idleThread = _idleThread;
-	_idleThread->core = core_local;
+	set_gs_register(core_local);
 
 	/* Set the struct fields to their appropriate values */
 	core_local->lapic_id = core->lapic_id;
-	core_local->current = _idleThread;
-	set_gs_register(_idleThread);
 
 	/* Initialize LAPIC */
 	if(!cpu_has_feature(CPU_FEATURE_APIC)) {

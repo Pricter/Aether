@@ -4,7 +4,6 @@
 #include <kernel/mmu.h>
 #include <stdbool.h>
 #include <kernel/types.h>
-#include <kernel/scheduler.h>
 
 extern uint64_t coreCount;
 
@@ -53,12 +52,6 @@ typedef struct core {
 
 	/* If our core is the one that ran start */
 	bool bsp;
-
-	/* Current thread */
-	struct thread* current;
-
-	/* Used when the waiting queue is exhausted */
-	struct thread* idleThread;
 } core_t;
 
 typedef struct cpu_info {
@@ -108,10 +101,6 @@ struct regs {
 
 	/* Pushed by interrupt */
 	uintptr_t rip, cs, rflags, rsp, ss;
-};
-
-struct Context {
-	uint64_t rbx, rbp, r12, r13, r14, r15, rip;
 };
 
 void panic(const char* desc, struct regs* r);

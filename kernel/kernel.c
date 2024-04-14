@@ -8,7 +8,6 @@
 #include <kernel/ports.h>
 #include <kernel/cpufeature.h>
 #include <stdbool.h>
-#include <kernel/scheduler.h>
 #include <kernel/hpet.h>
 #include <kernel/apic.h>
 
@@ -85,12 +84,8 @@ void _start(void) {
 	/* Initialize the HPET timer */
 	hpet_init();
 
-	scheduler_init();
-
 	/* Initialize multicore */
 	smp_init();
-
-	struct thread* kinit = scheduler_new_kthread((void*)kinit_func, true);
 
 	halt();
 }

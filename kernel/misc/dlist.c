@@ -2,7 +2,6 @@
 #include <memory.h>
 #include <kernel/mmu.h>
 #include <kernel/kprintf.h>
-#include <kernel/scheduler.h>
 
 node_t* dlist_create_empty() {
     node_t* head = (node_t*)malloc(sizeof(node_t));
