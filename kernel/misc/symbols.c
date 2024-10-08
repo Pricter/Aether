@@ -1,3 +1,9 @@
+/**
+ * symbols.c: Gets symbols defined in the kernel, basically, the kernel indexes itself.
+ * 
+ * Used for stacktrace to know the names of functions at addresses.
+ */
+
 #include <stdint.h>
 #include <stddef.h>
 #include <kernel/mmu.h>
@@ -12,6 +18,7 @@
 extern void fatal(void);
 
 /* Request limine for kernel file to parse symbols */
+__attribute__((used, section(".requests")))
 static volatile struct limine_kernel_file_request kfile_request = {
 	.id = LIMINE_KERNEL_FILE_REQUEST,
 	.revision = 0,
@@ -38,6 +45,8 @@ ksym_func_t* function_table = NULL;
 /* Not the end of the world if we dont have symbols */
 static bool symbols_present = false;
 
+/* Indexes the kernel's ELF file to get funtion names */
+/* TODO: Move ELF parsing into a seperate file dedicated to ELF parsing */
 void __init symbols_init(void) {
 	kfile_address = kfile_request.response->kernel_file->address;
 	Elf64_Ehdr* hdr = kfile_address;
@@ -110,6 +119,7 @@ ksym_func_t* symbols_search(uintptr_t address) {
     return closest_symbol;
 }
 
+/* Get stacktrace */
 void stacktrace(void) {
 	stack_frame_t* stack;
 	asm volatile ("movq %%rbp, %0" : "=r"(stack));

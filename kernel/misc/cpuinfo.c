@@ -1,3 +1,9 @@
+/**
+ * cpuinfo.c: Retrieve information about CPU
+ * 
+ * NOT to be confused with cpu features, this only retrieves the vendor name and specific name of cpu
+ */
+
 #include <kernel/kprintf.h>
 #include <kernel/mmu.h>
 #include <kernel/cpu.h>

@@ -455,7 +455,7 @@ typedef struct {
 /**
  * The symbol specifies a Thread-Local Storage entity. When defined,
  * it gives the assigned offset for the symbol, not the actual
- * address. Symbols of tyupe STT_TLS can be referenced by only
+ * address. Symbols of type STT_TLS can be referenced by only
  * special thread-local storage relocations and thread-local
  * storage relocations can only reference symbols with type STT_TLS.
  * Implementation need not support thread-local storage

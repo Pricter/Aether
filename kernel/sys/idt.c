@@ -1,3 +1,10 @@
+/**
+ * idt.c: Interrupt Descriptor table
+ * 
+ * Handles the loading, initializing of idt
+ * Handles setting ISRs, Directing interrupts to be handled as exceptions or IRQs
+ */
+
 #include <kernel/cpu.h>
 #include <kernel/int.h>
 #include <stdint.h>
@@ -28,11 +35,14 @@ void idt_set_gate(uint8_t num, void* handler, uint16_t selector, uint8_t flags, 
 	idt[num].flags = flags | (userspace ? 0x60 : 0);
 }
 
+/**
+ * @brief: Return the next free vector
+ */
 uint8_t idt_allocate(void) {
 	static spinlock_t lock = SPINLOCK_ZERO;
 	bool int_state = spinlock_acquire(&lock);
 
-	if(free_vector == 0xf0) {
+	if(free_vector == 255) {
 		panic("IDT Vectors exhauted\n", NULL);
 	}
 
@@ -41,8 +51,10 @@ uint8_t idt_allocate(void) {
 	return ret;
 }
 
+/* All cores share the same idt */
 irq_t *irqs = NULL;
 
+/* isrs are defined in the int.S file */
 extern void *isrs[];
 
 /**
@@ -60,6 +72,7 @@ void __init idt_init(void) {
 	irqs = malloc(sizeof(irq_t) * IRQ_COUNT);
 }
 
+/* Load the IDT */
 void idt_reload(void) {
 	asm volatile (
 		"lidt %0"
@@ -67,17 +80,24 @@ void idt_reload(void) {
 	);
 }
 
+/**
+ * Install a function as irq handler for a vector
+ * 
+ * @param irq: Function with signature [regs* (*irq_t)(struct regs* r)], is called when irq is called at @param index
+ */
 void irq_install(irq_t irq, int index) {
 	irqs[index - 32] = irq;
 	kprintf("irq: Install IRQ %d to %p\n", index - 32, symbols_search((uintptr_t)irqs[index - 32]));
 }
 
+/* Exception handler, makes things tidy */
 static void _exception(struct regs* r, const char* description) {
 	if((r->cs & 0x3) == 0) {
 	 	panic(description, r);
 	}
 }
 
+/* Initial Common IRQ Handler, makes things tidy. Just calls the specific handler and returns */
 struct regs* _handle_irq(struct regs* r, int irqIndex) {
 	irq_t handler = irqs[irqIndex];
 	if(!handler) {
@@ -89,10 +109,15 @@ struct regs* _handle_irq(struct regs* r, int irqIndex) {
 #define EXC(i, n) case i: _exception(r, n); break;
 #define IRQ(i) case i: return _handle_irq(r, i - 32);
 
-struct regs* isr_handler_inner(struct regs* r) {
-	switch (r->int_no) {
+/* Reference to gs segment, all access to core_local will be converted to access from %gs:0 */
+static core_t __seg_gs const* core_local = 0;
+
+/* Called by asm isr_common, directs isrs to be handled as exceptions or irqs */
+struct regs* isr_handler(struct regs* r) {
+    switch (r->int_no) {
+		/* Exceptions */
 		EXC(0, "divide-by-zero")
-		EXC(3, "breakpoint") /* TODO: map to ptrace event */
+		EXC(3, "breakpoint")
 		EXC(4, "overflow")
 		EXC(5, "bound range exceeded")
 		EXC(6, "invalid opcode")
@@ -113,23 +138,20 @@ struct regs* isr_handler_inner(struct regs* r) {
 		EXC(29, "mmu communication exception")
 		EXC(30, "security exception")
 
-		IRQ(32)
-		case 99: {
-			kprintf("Received halt signal on core %lu\n", ((core_t*)get_gs_register())->lapic_id);
-			halt();
+		/* IRQs */
+		IRQ(32);
+
+		/* HALT Signal */
+		case 255: {
+			kprintf("Received halt signal on core %lu\n", core_local->lapic_id);
+			asm ("1: hlt; jmp 1b");
 		} break;
 
+		/* Interrupt on unknown vector */
 		default: {
-			core_t* core = get_gs_register();
-			kprintf("int: Received Unexpected interrupt on core %lu, vector = %lu\n", core->lapic_id, r->int_no);
+			kprintf("int: Received Unexpected interrupt on core %lu, vector = %lu\n", core_local->lapic_id, r->int_no);
 		} break;
 	}
 
 	return r;
-}
-
-struct regs* isr_handler(struct regs* r) {
-    struct regs* out = isr_handler_inner(r);
-    
-	return out;
 }

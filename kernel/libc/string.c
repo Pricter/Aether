@@ -1,3 +1,7 @@
+/**
+ * string.c: String functions
+ */
+
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
@@ -5,6 +9,7 @@
 #include <kernel/mmu.h>
 #include <memory.h>
 
+/* Get length of string */
 size_t strlen(const char* s) {
 	const char* a = s;
 	const size_t *w;
@@ -18,6 +23,7 @@ size_t strlen(const char* s) {
 	return s-a;
 }
 
+/* Compare strings */
 int strcmp(const char* s1, const char* s2) {
 	while(*s1 && (*s1 == *s2)) {
 		s1++;
@@ -26,6 +32,7 @@ int strcmp(const char* s1, const char* s2) {
 	return *(const unsigned char*)s1 - *(const unsigned char*)s2;
 }
 
+/* Trim a string */
 char* strctrim(const char* s, char c) {
 	size_t len = strlen(s);
 	const char* end = s + len - 1;
@@ -42,6 +49,7 @@ char* strctrim(const char* s, char c) {
 	return trimmed;
 }
 
+/* Duplicate a string */
 char* strdup(const char* s) {
 	size_t length = strlen(s) + 1;
 	char* new = (char*)malloc(length);

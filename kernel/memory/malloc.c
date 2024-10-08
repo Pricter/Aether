@@ -1,3 +1,7 @@
+/**
+ * mintsuki's slab allocator
+ */
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

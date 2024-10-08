@@ -4,12 +4,9 @@
 #include <kernel/mmu.h>
 #include <stdbool.h>
 #include <kernel/types.h>
+#include <kernel/msr.h>
 
 extern uint64_t coreCount;
-
-static inline void halt(void) {
-	asm volatile("1: hlt; jmp 1b");
-}
 
 static inline uint64_t read_cr0(void) {
     uint64_t cr0_value;
@@ -33,17 +30,6 @@ static inline uint64_t read_cr4(void) {
     uint64_t cr4_value;
     asm volatile("mov %%cr4, %0" : "=r" (cr4_value));
     return cr4_value;
-}
-
-static inline uint64_t rdmsr(uint32_t msr) {
-	uint32_t edx = 0, eax = 0;
-	asm volatile (
-		"rdmsr\n\t"
-		: "=a" (eax), "=d" (edx)
-		: "c" (msr)
-		: "memory"
-	);
-	return ((uint64_t)edx << 32) | eax;
 }
 
 typedef struct core {
@@ -92,6 +78,7 @@ static inline bool interrupt_toggle(bool state) {
  */
 struct regs {
 	/* Pushed by common stub */
+	uintptr_t cr2, gs, fs, es, ds;
 	uintptr_t r15, r14, r13, r12;
 	uintptr_t r11, r10, r9, r8;
 	uintptr_t rbp, rdi, rsi, rdx, rcx, rbx, rax;
@@ -106,20 +93,11 @@ struct regs {
 void panic(const char* desc, struct regs* r);
 
 static void fatal(void) {
-	asm volatile("1: cli; hlt; jmp 1b");
+	asm volatile("1: hlt; jmp 1b");
 }
 
-static inline void *get_gs_register(void) {
-    void *ret = NULL;
-    asm volatile ("mov %%gs:0x0, %0" : "=r" (ret));
-    return ret;
-}
-
-static inline void wrmsr(uint32_t msr, uint64_t value) {
-	uint32_t low = value & 0xFFFFFFFF;
-	uint32_t high = (value >> 32) & 0xFFFFFFFF;
-
-	asm volatile ("wrmsr" : : "c" (msr), "a" (low), "d" (high));
+static inline void* read_gs_register() {
+	return (void*)rdmsr(0xC0000101);
 }
 
 static inline void set_gs_register(void* toSet) {

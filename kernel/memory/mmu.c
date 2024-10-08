@@ -1,3 +1,9 @@
+/**
+ * mmu.c: Includes PMM as well as VMM
+ * 
+ * TODO: Shabby, might have to improve
+ */
+
 #include <kernel/mmu.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -14,18 +20,21 @@ spinlock_t mmu_lock = SPINLOCK_ZERO;
 extern void fatal(void);
 
 /* Request limine for a memmap */
+__attribute__((used, section(".requests")))
 static volatile struct limine_memmap_request memmap_request = {
     .id = LIMINE_MEMMAP_REQUEST,
     .revision = 0,
 };
 
 /* Request limine for hhdm */
+__attribute__((used, section(".requests")))
 volatile struct limine_hhdm_request hhdm_request = {
 	.id = LIMINE_HHDM_REQUEST,
 	.revision = 0,
 };
 
 /* Request limine for the kernel address */
+__attribute__((used, section(".requests")))
 static volatile struct limine_kernel_address_request kaddr_request = {
 	.id = LIMINE_KERNEL_ADDRESS_REQUEST,
 	.revision = 0,
@@ -317,8 +326,7 @@ uint64_t clean_reclaimable_memory(void) {
     struct limine_memmap_response* response = memmap_request.response;
     if(response == NULL || response->entry_count == 0) {
 		/* If no memmap then hang */
-        asm ("cli");
-        for(;;) asm ("hlt");
+        fatal();
     }
 
 	uint64_t cleared = 0;
@@ -348,8 +356,7 @@ void __init mmu_init(void) {
     struct limine_memmap_response* response = memmap_request.response;
     if(response == NULL || response->entry_count == 0) {
 		/* If no memmap then hang */
-        asm ("cli");
-        for(;;) asm ("hlt");
+        fatal();
     }
 
     struct limine_memmap_entry** entries = response->entries;

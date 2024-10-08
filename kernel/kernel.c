@@ -24,12 +24,24 @@ extern void acpi_init(void);
 extern void hpet_init(void);
 extern void cpu_feature_init(void);
 
+__attribute__((used, section(".requests")))
+static volatile LIMINE_BASE_REVISION(2);
+
+__attribute__((used, section(".requests_start_marker")))
+static volatile LIMINE_REQUESTS_START_MARKER;
+
+__attribute__((used, section(".requests_end_marker")))
+static volatile LIMINE_REQUESTS_END_MARKER;
+
 void kinit_func(void) {
 	kprintf("Reclaimed a total of %lu bytes\n", clean_reclaimable_memory());
 	for(;;) {
 		kprintf("x");
 	}
 }
+
+/* Initial core */
+static core_t* core_bsp = NULL;
 
 /**
  * The kernel start function. The kernel begins executing from
@@ -51,6 +63,11 @@ void _start(void) {
 	/* Initialize the slab allocator */
 	slab_init();
 
+	core_bsp = malloc(sizeof(core_bsp));
+	core_bsp->bsp = true;
+	core_bsp->lapic_id = 0;
+	set_gs_register(core_bsp);
+
 	/* Initialize printf */
 	printf_init();
 
@@ -67,8 +84,10 @@ void _start(void) {
 		__kernel_build_date,
 		__kernel_build_time);
 	
+	/* Get available features of CPU */
 	cpu_feature_init();
 
+	/* Initialize ACPI */
 	acpi_init();
 
 	/* Initialize kernel symbols */
@@ -87,5 +106,6 @@ void _start(void) {
 	/* Initialize multicore */
 	smp_init();
 
-	halt();
+	/* All done, hang the system */
+	asm ("1: hlt; jmp 1b");
 }

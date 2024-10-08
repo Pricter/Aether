@@ -1,8 +1,15 @@
+/**
+ * dlist.c: Dynamic list implementation
+ */
+
+// TODO: Move to a seperate datastructures folder
+
 #include <kernel/dlist.h>
 #include <memory.h>
 #include <kernel/mmu.h>
 #include <kernel/kprintf.h>
 
+/* Create empty list */
 node_t* dlist_create_empty() {
     node_t* head = (node_t*)malloc(sizeof(node_t));
     if (head) {
@@ -13,6 +20,7 @@ node_t* dlist_create_empty() {
     return head;
 }
 
+/* Get length of list */
 uint64_t dlist_get_length(node_t* head) {
     uint64_t length = 0;
     node_t* current = head->next;
@@ -23,6 +31,7 @@ uint64_t dlist_get_length(node_t* head) {
     return length;
 }
 
+/* Push value to the end of the list */
 void dlist_push(node_t* head, void* value) {
     node_t* new_node = (node_t*)malloc(sizeof(node_t));
     if (new_node) {
@@ -40,6 +49,7 @@ void dlist_push(node_t* head, void* value) {
     }
 }
 
+/* Pop value from the end of the list */
 node_t* dlist_pop(node_t* head) {
     node_t* current = head;
     while (current->next != NULL) {
@@ -53,6 +63,7 @@ node_t* dlist_pop(node_t* head) {
     return current;
 }
 
+/* Push value at a particualar index in the list */
 void dlist_push_at(node_t* head, void* value, uint64_t index) {
     uint64_t length = dlist_get_length(head);
 
@@ -88,6 +99,7 @@ void dlist_push_at(node_t* head, void* value, uint64_t index) {
     }
 }
 
+/* Pop value at a particular index in list */
 node_t* dlist_pop_at(node_t* head, uint64_t index) {
     uint64_t length = dlist_get_length(head);
 
@@ -115,6 +127,7 @@ node_t* dlist_pop_at(node_t* head, uint64_t index) {
     }
 }
 
+/* Pop and free node entirely from the end */
 void dlist_destroy_item(node_t* head, uint64_t index) {
     node_t* item = dlist_pop_at(head, index);
     if (item) {
@@ -123,6 +136,7 @@ void dlist_destroy_item(node_t* head, uint64_t index) {
     }
 }
 
+/* Free the entire array */
 void dlist_destroy_array(node_t* head) {
     while (head->next != NULL) {
         dlist_destroy_item(head, 0);
@@ -130,6 +144,7 @@ void dlist_destroy_array(node_t* head) {
     free(head);
 }
 
+/* Use when only accessing the value is desired instead of removing (popping) the value at an idex */
 void* dlist_get(node_t* head, uint64_t index) {
     uint64_t length = dlist_get_length(head);
 
@@ -146,6 +161,7 @@ void* dlist_get(node_t* head, uint64_t index) {
     return current->value;
 }
 
+/* Remove value without from array without knowing the index of it in the array */
 void dlist_remove_item(node_t* head, void* item) {
 	for(uint64_t i = 0; i < dlist_get_length(head); i++) {
 		void* toCheck = dlist_get(head, i);

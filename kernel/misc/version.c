@@ -1,9 +1,12 @@
-#include <kernel/version.h>
-
 /**
- * 0.0.1: Start development
- * 0.0.2: Name change to Aether and scheduler dones
-*/
+ * version.c: Allows the kernel to know which version it is running, also includes the git tag for futher specification
+ * 
+ * 0.0.0: Started
+ * 0.0.1: MMU Done
+ * 0.0.2: Scheduler completed
+ */
+
+#include <kernel/version.h>
 
 #define STR(x) #x
 #define STRSTR(x) STR(x)
@@ -16,7 +19,7 @@ const char *__kernel_version_format = "%d.%d.%d-%s";
 /* Version numbers */
 int __kernel_version_major = 0;
 int __kernel_version_minor = 0;
-int __kernel_version_lower = 2;
+int __kernel_version_lower = 1;
 
 /* Kernel build suffix, which doesn't necessarily
  * mean anything, but can be used to distinguish

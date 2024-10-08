@@ -9,6 +9,8 @@
 
 #include <stdint.h>
 
+#define CPUID_LEAF_0x80000001_EDX_SYSCALL (1 << 11)
+
 #if !(__x86_64)
 #error Header included in a non x86 cpu
 #endif

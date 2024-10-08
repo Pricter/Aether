@@ -24,6 +24,7 @@ void putchar_(char c) {
 }
 
 /* Request limine for a framebuffer to print to */
+__attribute__((used, section(".requests")))
 volatile struct limine_framebuffer_request framebuffer_request = {
     .id = LIMINE_FRAMEBUFFER_REQUEST,
     .revision = 0
@@ -87,6 +88,9 @@ void __init printf_init(void) {
 	context->cursor_enabled = false;
 }
 
+/**
+ * kprintf: Print to framebuffer, also prints to serial if SERIAL_LOG parameter is passed at compile time
+ */
 void kprintf(const char* fmt, ...) {
 	bool int_state = spinlock_acquire(&printlock);
 

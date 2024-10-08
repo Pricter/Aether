@@ -1,3 +1,9 @@
+/**
+ * ubsan.c: (U)ndefined (B)ehavior (San)itizor.
+ * 
+ * Catches faults in kernel during runtime like out of bounds, invalid value or type mismatch and most commonly unaligned pointer.
+ */
+
 #include <kernel/kprintf.h>
 #include <stdint.h>
 

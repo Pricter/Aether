@@ -1,3 +1,7 @@
+/**
+ * memory.c: Memory functions, GCC and Clang require the right to access these functions and MUST be defined
+ */
+
 #include <stdint.h>
 #include <stddef.h>
 

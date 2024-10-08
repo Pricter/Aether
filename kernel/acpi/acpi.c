@@ -1,3 +1,9 @@
+/**
+ * acpi.c: ACPI Headers and tables
+ * 
+ * Used for accessing ACPI headers and tables
+ */
+
 #include <stdint.h>
 #include <stddef.h>
 #include <kernel/mmu.h>
@@ -11,11 +17,14 @@
 #include <kernel/cpu.h>
 #include <kernel/macros.h>
 
+/* Request Limine for RSDP address */
+__attribute__((used, section(".requests")))
 static volatile struct limine_rsdp_request rsdp_request = {
 	.id = LIMINE_RSDP_REQUEST,
 	.revision = 0,
 };
 
+/* Lists of lapic, ioapic, ioapic_so, ioapic_nmi and lapic_nmi */
 node_t* madt_lapic = NULL;
 node_t* madt_ioapic = NULL;
 node_t* madt_ioapic_so = NULL;
@@ -28,10 +37,12 @@ uint64_t lapic_address = 0;
 
 char* acpiTableAddresses = NULL;
 
+/* Check if XSDT can be used */
 static inline int using_xsdt(void) {
 	return rsdp->revision >= 2 && rsdp->xsdtAddr != 0;
 }
 
+/* Find ACPI table based on 4 character signature */
 struct acpi_common_header* acpi_find_table(char t_sig[static 4]) {
 	size_t entry_count = (rsdt->hdr.length - sizeof(struct acpi_common_header)) / (using_xsdt() ? 8 : 4);
 	for(size_t i = 0; i < entry_count; i++) {
@@ -51,6 +62,7 @@ struct acpi_common_header* acpi_find_table(char t_sig[static 4]) {
 	return NULL;
 }
 
+/* Check if header exists based on 4 character signature */
 bool acpi_exists(char t_sig[static 4]) {
 	size_t entry_count = (rsdt->hdr.length - sizeof(struct acpi_common_header)) / (using_xsdt() ? 8 : 4);
 	for(size_t i = 0; i < entry_count; i++) {
@@ -70,6 +82,7 @@ struct fadt *fadt = NULL;
 
 bool apic_enabled;
 
+/* Initialize ACPI, Find and add all lapic, ioapic, ioiapic_so, lapic_nmi, ioapic_nmi to their respective lists */
 void __init acpi_init(void) {
 	madt_lapic = dlist_create_empty();
 	madt_ioapic = dlist_create_empty();
@@ -77,11 +90,12 @@ void __init acpi_init(void) {
 	madt_ioapic_nmi = dlist_create_empty();
 	madt_lapic_nmi = dlist_create_empty();
 
+	/* System has no ACPI, panic because we cant access some crucial tables */
 	if(rsdp_request.response->address == NULL) panic("System has no ACPI", NULL);
 	rsdp = (struct rsdp_structure*)(rsdp_request.response->address);
 	kprintf("acpi: RDSP structure located at %p, signature: \"", rsdp);
 	for(int i = 0; i < 8; i++) kprintf("%c", rsdp->sig[i]);
-	kprintf("\"\n");
+	kprintf("\"\n");	
 
 	if(using_xsdt()) {
 		rsdt = (struct rsdt*)(rsdp->xsdtAddr + HHDM_HIGHER_HALF);

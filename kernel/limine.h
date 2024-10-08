@@ -1,6 +1,6 @@
 /* BSD Zero Clause License */
 
-/* Copyright (C) 2022-2023 mintsuki and contributors.
+/* Copyright (C) 2022-2024 mintsuki and contributors.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted.
@@ -14,8 +14,8 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef _LIMINE_H
-#define _LIMINE_H 1
+#ifndef LIMINE_H
+#define LIMINE_H 1
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,6 +43,19 @@ extern "C" {
 #  define LIMINE_DEPRECATED_IGNORE_START
 #  define LIMINE_DEPRECATED_IGNORE_END
 #endif
+
+#define LIMINE_REQUESTS_START_MARKER \
+    uint64_t limine_requests_start_marker[4] = { 0xf6b8f4b39de7d1ae, 0xfab91a6940fcb9cf, \
+                                                 0x785c6ed015d3e316, 0x181e920a7852b9d9 };
+#define LIMINE_REQUESTS_END_MARKER \
+    uint64_t limine_requests_end_marker[2] = { 0xadc0e0531bb10d03, 0x9572709f31764c62 };
+
+#define LIMINE_REQUESTS_DELIMITER LIMINE_REQUESTS_END_MARKER
+
+#define LIMINE_BASE_REVISION(N) \
+    uint64_t limine_base_revision[3] = { 0xf9562b2d5c95a6c8, 0x6a7b384944536bdc, (N) };
+
+#define LIMINE_BASE_REVISION_SUPPORTED (limine_base_revision[2] == 0)
 
 #define LIMINE_COMMON_MAGIC 0xc7b1dd30df4c8b88, 0x0a82e883a194f07b
 
@@ -88,6 +101,25 @@ struct limine_bootloader_info_request {
     uint64_t id[4];
     uint64_t revision;
     LIMINE_PTR(struct limine_bootloader_info_response *) response;
+};
+
+/* Firmware type */
+
+#define LIMINE_FIRMWARE_TYPE_REQUEST { LIMINE_COMMON_MAGIC, 0x8c2f75d90bef28a8, 0x7045a4688eac00c3 }
+
+#define LIMINE_FIRMWARE_TYPE_X86BIOS 0
+#define LIMINE_FIRMWARE_TYPE_UEFI32 1
+#define LIMINE_FIRMWARE_TYPE_UEFI64 2
+
+struct limine_firmware_type_response {
+    uint64_t revision;
+    uint64_t firmware_type;
+};
+
+struct limine_firmware_type_request {
+    uint64_t id[4];
+    uint64_t revision;
+    LIMINE_PTR(struct limine_firmware_type_response *) response;
 };
 
 /* Stack size */
@@ -233,19 +265,65 @@ struct LIMINE_DEPRECATED limine_terminal_request {
 
 LIMINE_DEPRECATED_IGNORE_END
 
+/* Paging mode */
+
+#define LIMINE_PAGING_MODE_REQUEST { LIMINE_COMMON_MAGIC, 0x95c1a0edab0944cb, 0xa4e5cb3842f7488a }
+
+#if defined (__x86_64__) || defined (__i386__)
+#define LIMINE_PAGING_MODE_X86_64_4LVL 0
+#define LIMINE_PAGING_MODE_X86_64_5LVL 1
+#define LIMINE_PAGING_MODE_MIN LIMINE_PAGING_MODE_X86_64_4LVL
+#define LIMINE_PAGING_MODE_DEFAULT LIMINE_PAGING_MODE_X86_64_4LVL
+#elif defined (__aarch64__)
+#define LIMINE_PAGING_MODE_AARCH64_4LVL 0
+#define LIMINE_PAGING_MODE_AARCH64_5LVL 1
+#define LIMINE_PAGING_MODE_MIN LIMINE_PAGING_MODE_AARCH64_4LVL
+#define LIMINE_PAGING_MODE_DEFAULT LIMINE_PAGING_MODE_AARCH64_4LVL
+#elif defined (__riscv) && (__riscv_xlen == 64)
+#define LIMINE_PAGING_MODE_RISCV_SV39 0
+#define LIMINE_PAGING_MODE_RISCV_SV48 1
+#define LIMINE_PAGING_MODE_RISCV_SV57 2
+#define LIMINE_PAGING_MODE_MIN LIMINE_PAGING_MODE_RISCV_SV39
+#define LIMINE_PAGING_MODE_DEFAULT LIMINE_PAGING_MODE_RISCV_SV48
+#elif defined (__loongarch__) && (__loongarch_grlen == 64)
+#define LIMINE_PAGING_MODE_LOONGARCH64_4LVL 0
+#define LIMINE_PAGING_MODE_MIN LIMINE_PAGING_MODE_LOONGARCH64_4LVL
+#define LIMINE_PAGING_MODE_DEFAULT LIMINE_PAGING_MODE_LOONGARCH64_4LVL
+#else
+#error Unknown architecture
+#endif
+
+struct limine_paging_mode_response {
+    uint64_t revision;
+    uint64_t mode;
+};
+
+struct limine_paging_mode_request {
+    uint64_t id[4];
+    uint64_t revision;
+    LIMINE_PTR(struct limine_paging_mode_response *) response;
+    uint64_t mode;
+    uint64_t max_mode;
+    uint64_t min_mode;
+};
+
 /* 5-level paging */
 
 #define LIMINE_5_LEVEL_PAGING_REQUEST { LIMINE_COMMON_MAGIC, 0x94469551da9b3192, 0xebe5e86db7382888 }
 
-struct limine_5_level_paging_response {
+LIMINE_DEPRECATED_IGNORE_START
+
+struct LIMINE_DEPRECATED limine_5_level_paging_response {
     uint64_t revision;
 };
 
-struct limine_5_level_paging_request {
+struct LIMINE_DEPRECATED limine_5_level_paging_request {
     uint64_t id[4];
     uint64_t revision;
     LIMINE_PTR(struct limine_5_level_paging_response *) response;
 };
+
+LIMINE_DEPRECATED_IGNORE_END
 
 /* SMP */
 
@@ -279,7 +357,7 @@ struct limine_smp_response {
 
 struct limine_smp_info {
     uint32_t processor_id;
-    uint32_t gic_iface_no;
+    uint32_t reserved1;
     uint64_t mpidr;
     uint64_t reserved;
     LIMINE_PTR(limine_goto_address) goto_address;
@@ -288,8 +366,37 @@ struct limine_smp_info {
 
 struct limine_smp_response {
     uint64_t revision;
-    uint32_t flags;
+    uint64_t flags;
     uint64_t bsp_mpidr;
+    uint64_t cpu_count;
+    LIMINE_PTR(struct limine_smp_info **) cpus;
+};
+
+#elif defined (__riscv) && (__riscv_xlen == 64)
+
+struct limine_smp_info {
+    uint64_t processor_id;
+    uint64_t hartid;
+    uint64_t reserved;
+    LIMINE_PTR(limine_goto_address) goto_address;
+    uint64_t extra_argument;
+};
+
+struct limine_smp_response {
+    uint64_t revision;
+    uint64_t flags;
+    uint64_t bsp_hartid;
+    uint64_t cpu_count;
+    LIMINE_PTR(struct limine_smp_info **) cpus;
+};
+
+#elif defined (__loongarch__) && (__loongarch_grlen == 64)
+
+struct limine_smp_info {
+    uint64_t reserved;
+};
+
+struct limine_smp_response {
     uint64_t cpu_count;
     LIMINE_PTR(struct limine_smp_info **) cpus;
 };
@@ -373,6 +480,7 @@ struct limine_kernel_file_request {
 #define LIMINE_MODULE_REQUEST { LIMINE_COMMON_MAGIC, 0x3e7e279702be32af, 0xca1c4f3bd1280cee }
 
 #define LIMINE_INTERNAL_MODULE_REQUIRED (1 << 0)
+#define LIMINE_INTERNAL_MODULE_COMPRESSED (1 << 1)
 
 struct limine_internal_module {
     LIMINE_PTR(const char *) path;
@@ -440,6 +548,24 @@ struct limine_efi_system_table_request {
     uint64_t id[4];
     uint64_t revision;
     LIMINE_PTR(struct limine_efi_system_table_response *) response;
+};
+
+/* EFI memory map */
+
+#define LIMINE_EFI_MEMMAP_REQUEST { LIMINE_COMMON_MAGIC, 0x7df62a431d6872d5, 0xa4fcdfb3e57306c8 }
+
+struct limine_efi_memmap_response {
+    uint64_t revision;
+    LIMINE_PTR(void *) memmap;
+    uint64_t memmap_size;
+    uint64_t desc_size;
+    uint64_t desc_version;
+};
+
+struct limine_efi_memmap_request {
+    uint64_t id[4];
+    uint64_t revision;
+    LIMINE_PTR(struct limine_efi_memmap_response *) response;
 };
 
 /* Boot time */

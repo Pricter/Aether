@@ -1,3 +1,5 @@
+/* IOAPIC file */
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -7,26 +9,43 @@
 #include <kernel/dlist.h>
 #include <kernel/kprintf.h>
 
+/**
+ * ioapic_read: Read from an IOAPIC register
+ * 
+ * @param ioapic: The IOAPIC whose register is to be read
+ * @param reg: The register of the IOAPIC to read from
+ */
 uint32_t ioapic_read(struct madt_ioapic* ioapic, uint32_t reg) {
 	/* To read something we have to put the register index in IOREGSEL */
 	uint64_t base = (uint64_t)ioapic->ioAPICAddress + HHDM_HIGHER_HALF;
-
 	*(volatile uint32_t*)base = reg;
 	
 	/* And then read IOREGWIN */
 	return *(volatile uint32_t*)(base + 16);
 }
 
+/**
+ * ioapic_write: Write to an IOAPIC register
+ * 
+ * @param ioapic: The IOAPIC whose register is to be written
+ * @param reg: The register of the IOAPIC to write to
+ * @param value: The value to write to the IOAPIC register
+ */
 void ioapic_write(struct madt_ioapic* ioapic, uint32_t reg, uint32_t value) {
+    /* To write something we have to put the register index in IOREGSEL */
 	uint64_t base = (uint64_t)ioapic->ioAPICAddress + HHDM_HIGHER_HALF;
 	*(volatile uint32_t*)base = reg;
+
+    /* Then write to IOREGWIN */
 	*(volatile uint32_t*)(base + 16) = value;
 }
 
+/* Get GSI count of the IOAPIC */
 static uint64_t ioapic_gsi_count(struct madt_ioapic *io_apic) {
     return (ioapic_read(io_apic, 1) & 0xff0000) >> 16;
 }
 
+/* Get IOAPIC from GSI */
 static struct madt_ioapic *ioapic_from_gsi(uint32_t gsi) {
     for (uint64_t i = 0; i < dlist_get_length(madt_ioapic); i++) {
         struct madt_ioapic *ioapic = dlist_get(madt_ioapic, i);
@@ -38,6 +57,13 @@ static struct madt_ioapic *ioapic_from_gsi(uint32_t gsi) {
     return NULL;
 }
 
+/**
+ * ioapic_irq_redirect: Setup an irq redirect
+ * 
+ * @param lapic_id: Which lapic's irq is to be redirected
+ * @param vector: Interrupt on which vector is to be redirected
+ * @param irq: The irq to redirect to
+ */
 void ioapic_irq_redirect(uint32_t lapic_id, uint8_t vector, uint8_t irq, bool status) {
     for (size_t i = 0; i < dlist_get_length(madt_ioapic_so); i++) {
         struct madt_ioapic_so *iso = dlist_get(madt_ioapic_so, i);

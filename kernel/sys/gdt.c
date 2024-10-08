@@ -1,3 +1,7 @@
+/**
+ * Quick and simple gdt, taken from mintsuki's lyre
+ */
+
 #include <stdint.h>
 #include <stddef.h>
 #include <kernel/macros.h>
