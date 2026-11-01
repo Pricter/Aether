@@ -302,6 +302,7 @@ thread_t *thread_create_user(process_t *process, uintptr_t entry, uintptr_t stac
     thread_t *thread = thread_create(process, arm64_user_thread_start);
 
     if (thread) {
+        thread->tid = process->pid;
         thread->user_entry = entry;
         thread->ustack_top = stack_top;
     }

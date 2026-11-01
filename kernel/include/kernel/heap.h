@@ -14,3 +14,14 @@ void slab_init(void);
 void *malloc(size_t size);
 void *realloc(void *address, size_t new_size);
 void free(void *address);
+
+#define HEAP_CACHE_COUNT 9U
+typedef struct {
+    size_t retained_pages;
+    size_t live_objects[HEAP_CACHE_COUNT];
+} heap_snapshot_t;
+
+/* Allocation-free diagnostics under each cache lock. Normal context, no locks
+ * held. A globally consistent snapshot requires other heap users quiescent.
+ * Retained cache pages are permanent ownership, not unreclaimed live objects. */
+void heap_snapshot(heap_snapshot_t *snapshot);

@@ -1,5 +1,5 @@
 /* Static musl init and end-to-end ABI regression. A kernel-created child lets
- * waitpid exercise real completion/reaping before fork/exec are implemented. */
+ * waitpid exercise real completion/reaping, including fork and exec rollback. */
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +18,7 @@
 #include <dirent.h>
 #include <time.h>
 #include <sched.h>
+#include <termios.h>
 
 static __thread volatile unsigned long thread_cookie = 0x123456789abcdef0UL;
 static unsigned char zero_storage[8192];
@@ -48,7 +49,7 @@ static void check_simd(void) {
 }
 
 /* libc allocation, anonymous mapping/protection, BSS and TLS all require the
- * correct ELF program headers and Linux initial stack/auxiliary vector. */
+ * correct ELF program headers and userspace initial stack/auxiliary vector. */
 static void check_memory(void) {
     for (size_t index = 0; index < sizeof(zero_storage); ++index) {
         REQUIRE(!zero_storage[index]);
@@ -75,7 +76,7 @@ static void check_memory(void) {
     REQUIRE(munmap(memory, 4096) == 0);
 }
 
-/* Exercise the actual shared tmpfs/devfs/VFS, including Linux ARM stat layout,
+/* Exercise the actual shared tmpfs/devfs/VFS, including AArch64 stat layout,
  * vector/positioned I/O, descriptor flags, directories, relative paths and EOF. */
 static void check_files(void) {
     char directory[80], pathname[120], renamed_path[120], buffer[256];
@@ -157,6 +158,15 @@ static void check_files(void) {
 
 /* Parent waits for the kernel-launched child and consumes its status once. */
 int main(int argument_count, char **arguments) {
+    if (argument_count == 3 && !strcmp(arguments[1], "exec-child")) {
+        REQUIRE(getpid() == atoi(arguments[2]));
+        REQUIRE(getenv("EXEC_MARKER") && !strcmp(getenv("EXEC_MARKER"), "preserved"));
+        REQUIRE(fcntl(11, F_GETFD) == -1 && errno == EBADF);
+        REQUIRE(fcntl(12, F_GETFD) >= 0);
+
+        return 42;
+    }
+
     REQUIRE(argument_count == 2 && !strcmp(arguments[0], "/sbin/init"));
     REQUIRE(getenv("AETHER_ARCH") && !strcmp(getenv("AETHER_ARCH"), "aarch64"));
     REQUIRE(getauxval(AT_PAGESZ) == 4096 && getauxval(AT_PHNUM) && getauxval(AT_RANDOM));
@@ -180,6 +190,78 @@ int main(int argument_count, char **arguments) {
     REQUIRE(!strcmp(arguments[1], "parent"));
     check_memory();
     check_files();
+
+    /* Eager fork keeps user memory/TLS private and descriptors shared. Exec
+     * preserves PID, passes arbitrary vectors, and closes only CLOEXEC slots. */
+    int executable = open("/sbin/init", O_RDONLY);
+    REQUIRE(executable >= 0);
+    REQUIRE(dup3(executable, 11, O_CLOEXEC) == 11);
+    REQUIRE(dup3(executable, 12, 0) == 12);
+    REQUIRE(close(executable) == 0);
+    char invalid_path[80];
+    snprintf(invalid_path, sizeof(invalid_path), "/tmp/invalid-elf-%d", getpid());
+    int invalid = open(invalid_path, O_WRONLY | O_CREAT | O_EXCL, 0755);
+    REQUIRE(invalid >= 0 && write(invalid, "bad", 3) == 3 && close(invalid) == 0);
+    volatile int private_value = 17;
+    pid_t launched = fork();
+    REQUIRE(launched >= 0);
+
+    if (!launched) {
+        REQUIRE(thread_cookie == 0x123456789abcdef0UL);
+        check_simd();
+        private_value = 99;
+        thread_cookie = 7;
+        char identifier[32];
+        snprintf(identifier, sizeof(identifier), "%d", getpid());
+        char *args[] = {"/sbin/init", "exec-child", identifier, NULL};
+        char *env[] = {"EXEC_MARKER=preserved", NULL};
+        REQUIRE(execve("/does-not-exist", args, env) == -1 && errno == ENOENT);
+        REQUIRE(execve(invalid_path, args, env) == -1 && errno == ENOEXEC);
+        REQUIRE(execve("/sbin/init", (char *const *)1, env) == -1 && errno == EFAULT);
+
+        /* Exec does not need a free user descriptor slot. */
+        while (fcntl(12, F_DUPFD_CLOEXEC, 0) >= 0) {
+        }
+
+        REQUIRE(errno == EMFILE);
+        execve("/sbin/init", args, env);
+        _Exit(98);
+    }
+
+    int launched_status;
+    REQUIRE(waitpid(launched, &launched_status, 0) == launched);
+    REQUIRE(WIFEXITED(launched_status) && WEXITSTATUS(launched_status) == 42);
+    REQUIRE(private_value == 17 && thread_cookie == 0x123456789abcdef0UL);
+    REQUIRE(close(11) == 0 && close(12) == 0);
+    REQUIRE(unlink(invalid_path) == 0);
+
+    /* Termios belongs to the terminal, so serialize mode-changing tests across
+     * independently running parents using atomic O_EXCL creation. */
+    int terminal_lock;
+    while ((terminal_lock =
+                   open("/tmp/terminal-settings-lock", O_CREAT | O_EXCL | O_WRONLY, 0600)) < 0) {
+        REQUIRE(errno == EEXIST);
+        sched_yield();
+    }
+
+    int terminal = open("/dev/tty", O_RDONLY | O_NONBLOCK);
+    REQUIRE(terminal >= 0);
+    struct termios original_terminal, raw_terminal;
+    REQUIRE(tcgetattr(terminal, &original_terminal) == 0);
+    raw_terminal = original_terminal;
+    cfmakeraw(&raw_terminal);
+    REQUIRE(tcsetattr(terminal, TCSANOW, &raw_terminal) == 0);
+    struct termios observed_terminal;
+    REQUIRE(tcgetattr(terminal, &observed_terminal) == 0);
+    REQUIRE(!(observed_terminal.c_lflag & (ICANON | ECHO)));
+    REQUIRE(tcsetattr(terminal, TCSAFLUSH, &original_terminal) == 0);
+
+    char input_byte;
+    REQUIRE(read(terminal, &input_byte, 0) == 0);
+    REQUIRE(read(terminal, &input_byte, 1) == -1 && errno == EAGAIN);
+    REQUIRE(close(terminal) == 0);
+    REQUIRE(close(terminal_lock) == 0 && unlink("/tmp/terminal-settings-lock") == 0);
+
     struct timespec first_time, second_time, pause = {0, 1000000};
     REQUIRE(clock_gettime(CLOCK_MONOTONIC, &first_time) == 0 && nanosleep(&pause, NULL) == 0);
     REQUIRE(clock_gettime(CLOCK_MONOTONIC, &second_time) == 0);
@@ -187,6 +269,10 @@ int main(int argument_count, char **arguments) {
 
     struct utsname identity;
     REQUIRE(uname(&identity) == 0 && !strcmp(identity.machine, "aarch64"));
+    REQUIRE(!strcmp(identity.sysname, "Aether") && !strcmp(identity.nodename, "Aether"));
+    REQUIRE(!strncmp(identity.release, "0.1-", 4));
+    REQUIRE(strlen(identity.release) == 37 && identity.release[16] == '-');
+    REQUIRE(!strcmp(identity.release + 17, identity.version));
 
     int status;
     REQUIRE(waitpid(-1, &status, 0) > 0 && WIFEXITED(status) && WEXITSTATUS(status) == 37);

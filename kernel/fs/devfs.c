@@ -6,7 +6,7 @@
  *   /dev/null  (major=1, minor=3) - reads return 0 bytes (EOF); writes discard.
  *   /dev/zero  (major=1, minor=5) - reads return zeroed bytes; writes discard.
  *   /dev/tty   (major=5, minor=0) - writes go to the PL011 console;
- *                                   reads return 0 (EOF) until stdin is wired;
+ *                                   reads consume buffered UART input;
  *                                   ioctl handles TCGETS and TIOCGWINSZ.
  *
  * The devfs root directory is a synthetic read-only directory backed by a
@@ -27,12 +27,12 @@
 #include <stdbool.h>
 
 #include <kernel/strings.h>
-#include <kernel/linux_abi.h>
+#include <kernel/syscall_abi.h>
 #include <kernel/page_memory.h>
 
-/* Device number encoding (Linux: (major<<8)|minor for small numbers) */
+/* Device number encoding (ABI: (major<<8)|minor for small numbers) */
 
-/* Pack the small Linux major/minor device numbers used by the built-in devices. */
+/* Pack the small major/minor device numbers used by the built-in devices. */
 static inline uint64_t encode_device_number(uint32_t major_number, uint32_t minor_number) {
     return ((uint64_t)(major_number & 0xfff) << 8) | (minor_number & 0xff);
 }
@@ -285,50 +285,252 @@ static const file_ops_t devfs_zero_file_ops = {
 
 /* /dev/tty file operations */
 
-/* Report EOF until terminal input is backed by a keyboard driver. */
+/* Userspace termios layout. This first line discipline supports
+ * ICANON/ECHO/ECHOE/ECHOK, ICRNL, erase/kill/EOF, and raw VMIN=1/VTIME=0. */
+struct terminal_settings {
+    uint32_t input_flags, output_flags, control_flags, local_flags;
+    unsigned char line, characters[19];
+};
+
+_Static_assert(sizeof(struct terminal_settings) == ABI_TERMIOS_SIZE, "termios layout");
+#define TERMINAL_ICRNL 0x100U
+#define TERMINAL_ICANON 2U
+#define TERMINAL_ECHO 8U
+#define TERMINAL_ECHOE 16U
+#define TERMINAL_ECHOK 32U
+#define TERMINAL_ERASE 2U
+#define TERMINAL_KILL 3U
+#define TERMINAL_EOF 4U
+#define TERMINAL_TIME 5U
+#define TERMINAL_MINIMUM 6U
+static spinlock_t terminal_state_lock = SPINLOCK_ZERO;
+static struct terminal_settings terminal_settings = {
+    .input_flags = TERMINAL_ICRNL,
+    .output_flags = 5,       /* OPOST | ONLCR */
+    .control_flags = 0x18b2, /* B115200 | CS8 | CREAD | CLOCAL */
+    .local_flags = TERMINAL_ICANON | TERMINAL_ECHO | TERMINAL_ECHOE | TERMINAL_ECHOK,
+    .characters = {[TERMINAL_ERASE] = 127,
+        [TERMINAL_KILL] = 21,
+        [TERMINAL_EOF] = 4,
+        [TERMINAL_MINIMUM] = 1},
+};
+
+static unsigned char terminal_line[256];
+static size_t terminal_used, terminal_offset;
+static bool terminal_complete;
+
+/* Caller holds terminal_state_lock; UART output never calls back into devfs. */
+static void terminal_echo(const void *bytes, size_t length) {
+    if ((terminal_settings.output_flags & 5U) == 5U) {
+        platform_serial_write_bytes(bytes, length);
+    } else {
+        platform_serial_write_raw_bytes(bytes, length);
+    }
+}
+
+static wait_queue_t terminal_readers;
+
+/* The driver publishes buffered bytes before calling this IRQ-safe callback. */
+static void terminal_input_notify(void) {
+    wait_queue_wake_all(&terminal_readers);
+}
+
+static bool terminal_input_ready(void *context) {
+    (void)context;
+
+    return platform_serial_input_ready() || __atomic_load_n(&terminal_complete, __ATOMIC_ACQUIRE);
+}
+
+/* Assemble canonical lines under a short state lock. Never hold it over a
+ * scheduler wait. All descriptors consume the same terminal input stream. */
 static errno_t tty_read(file_t *file, void *buffer, size_t byte_count, size_t *bytes_transferred) {
-    (void)file;
-    (void)buffer;
-    (void)byte_count;
-    *bytes_transferred = 0; /* EOF -- no keyboard driver yet */
-    return EOK;
+    *bytes_transferred = 0;
+
+    if (!byte_count) {
+        return EOK;
+    }
+
+    for (;;) {
+        bool interrupts = spinlock_acquire(&terminal_state_lock);
+        bool canonical = terminal_settings.local_flags & TERMINAL_ICANON;
+
+        if (!canonical) {
+            size_t retained = terminal_used - terminal_offset;
+
+            if (retained) {
+                *bytes_transferred = retained < byte_count ? retained : byte_count;
+                memcpy(buffer, terminal_line + terminal_offset, *bytes_transferred);
+                terminal_offset += *bytes_transferred;
+
+                if (terminal_offset == terminal_used) {
+                    terminal_used = terminal_offset = 0;
+                    __atomic_store_n(&terminal_complete, false, __ATOMIC_RELEASE);
+                }
+            } else {
+                *bytes_transferred = platform_serial_read_bytes(buffer, byte_count);
+                __atomic_store_n(&terminal_complete, false, __ATOMIC_RELEASE);
+            }
+
+            spinlock_release(&terminal_state_lock, interrupts);
+
+            if (*bytes_transferred) {
+                return EOK;
+            }
+        } else {
+            unsigned char character;
+
+            while (!terminal_complete && platform_serial_read_bytes(&character, 1)) {
+                if (character == '\r' && (terminal_settings.input_flags & TERMINAL_ICRNL)) {
+                    character = '\n';
+                }
+
+                if (character && (character == terminal_settings.characters[TERMINAL_ERASE] ||
+                                     character == '\b')) {
+                    if (terminal_used) {
+                        --terminal_used;
+
+                        if (terminal_settings.local_flags & TERMINAL_ECHO) {
+                            if (terminal_settings.local_flags & TERMINAL_ECHOE) {
+                                terminal_echo("\b \b", 3);
+                            } else {
+                                terminal_echo(&character, 1);
+                            }
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (character && character == terminal_settings.characters[TERMINAL_KILL]) {
+                    terminal_used = 0;
+
+                    if (terminal_settings.local_flags & TERMINAL_ECHO) {
+                        if (terminal_settings.local_flags & TERMINAL_ECHOK) {
+                            terminal_echo("\n", 1);
+                        } else {
+                            terminal_echo(&character, 1);
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (character && character == terminal_settings.characters[TERMINAL_EOF]) {
+                    __atomic_store_n(&terminal_complete, true, __ATOMIC_RELEASE);
+                    break;
+                }
+
+                if (terminal_used < sizeof(terminal_line) - 1 || character == '\n') {
+                    terminal_line[terminal_used++] = character;
+
+                    if (terminal_settings.local_flags & TERMINAL_ECHO) {
+                        terminal_echo(&character, 1);
+                    }
+                }
+
+                if (character == '\n') {
+                    __atomic_store_n(&terminal_complete, true, __ATOMIC_RELEASE);
+                }
+            }
+
+            if (terminal_complete) {
+                size_t count = terminal_used - terminal_offset;
+
+                if (count > byte_count) {
+                    count = byte_count;
+                }
+
+                memcpy(buffer, terminal_line + terminal_offset, count);
+                terminal_offset += count;
+
+                if (terminal_offset == terminal_used) {
+                    terminal_used = terminal_offset = 0;
+                    __atomic_store_n(&terminal_complete, false, __ATOMIC_RELEASE);
+                }
+                *bytes_transferred = count;
+                spinlock_release(&terminal_state_lock, interrupts);
+
+                return EOK;
+            }
+
+            spinlock_release(&terminal_state_lock, interrupts);
+        }
+
+        if (file_status_flags(file) & O_NONBLOCK) {
+            return -EAGAIN;
+        }
+
+        thread_wait_until(&terminal_readers, terminal_input_ready, NULL);
+    }
 }
 
 /* Forward bytes to the kernel terminal and report the full transfer. */
 static errno_t tty_write(
     file_t *file, const void *buffer, size_t byte_count, size_t *bytes_transferred) {
     (void)file;
-    platform_serial_write_bytes(buffer, byte_count);
+    bool interrupts = spinlock_acquire(&terminal_state_lock);
+    terminal_echo(buffer, byte_count);
+    spinlock_release(&terminal_state_lock, interrupts);
     *bytes_transferred = byte_count;
 
     return EOK;
 }
 
-/* The syscall layer supplies checked kernel buffers of the Linux wire size.
- * Settings are accepted without state until terminal input is implemented;
+/* The syscall layer supplies checked kernel buffers of the ABI wire size.
+ * Settings are shared by terminal descriptors;
  * setting attributes must not overwrite the caller's input buffer. */
 static errno_t tty_ioctl(file_t *file, unsigned long request, uintptr_t argument) {
     (void)file;
 
-    if (!argument && (request == LINUX_TCGETS || request == LINUX_TCSETSW ||
-                         request == LINUX_TCSETSF || request == LINUX_TIOCGWINSZ)) {
+    if (!argument && (request == ABI_TCGETS || request == ABI_TCSETS || request == ABI_TCSETSW ||
+                         request == ABI_TCSETSF || request == ABI_TIOCGWINSZ)) {
         return -EFAULT;
     }
 
     switch (request) {
-    case LINUX_TCGETS:
-        memset((void *)argument, 0, LINUX_TERMIOS_SIZE);
+    case ABI_TCGETS: {
+        bool interrupts = spinlock_acquire(&terminal_state_lock);
+        memcpy((void *)argument, &terminal_settings, sizeof(terminal_settings));
+        spinlock_release(&terminal_state_lock, interrupts);
 
         return EOK;
-    case LINUX_TCSETSW:
-    case LINUX_TCSETSF:
+    }
+
+    case ABI_TCSETS:
+    case ABI_TCSETSW:
+    case ABI_TCSETSF: {
+        struct terminal_settings settings;
+        memcpy(&settings, (void *)argument, sizeof(settings));
+
+        if (!(settings.local_flags & TERMINAL_ICANON) &&
+            (settings.characters[TERMINAL_MINIMUM] != 1 || settings.characters[TERMINAL_TIME])) {
+            return -EINVAL;
+        }
+
+        bool interrupts = spinlock_acquire(&terminal_state_lock);
+        terminal_settings = settings;
+
+        if (request == ABI_TCSETSF) {
+            terminal_used = terminal_offset = 0;
+            __atomic_store_n(&terminal_complete, false, __ATOMIC_RELEASE);
+            unsigned char discard[32];
+
+            while (platform_serial_read_bytes(discard, sizeof(discard))) {
+            }
+        }
+
+        spinlock_release(&terminal_state_lock, interrupts);
+        wait_queue_wake_all(&terminal_readers);
+
         return EOK;
-    case LINUX_TIOCGWINSZ: {
+    }
+
+    case ABI_TIOCGWINSZ: {
         /* Report the default make run console; pixel dimensions are unavailable. */
         enum { DEFAULT_TERMINAL_ROWS = 40, DEFAULT_TERMINAL_COLUMNS = 132 };
 
         const uint16_t dimensions[] = {DEFAULT_TERMINAL_ROWS, DEFAULT_TERMINAL_COLUMNS, 0, 0};
-        _Static_assert(sizeof(dimensions) == LINUX_WINSIZE_SIZE, "Linux winsize layout");
+        _Static_assert(sizeof(dimensions) == ABI_WINSIZE_SIZE, "winsize layout");
         memcpy((void *)argument, dimensions, sizeof(dimensions));
 
         return EOK;
@@ -386,6 +588,9 @@ static void devfs_register(const char *name, inode_t *inode) {
 
 /* Create the permanent device directory and transfer its root reference to the mount. */
 void devfs_init(void) {
+    wait_queue_init(&terminal_readers);
+    KERNEL_ASSERT(platform_serial_start_input(terminal_input_notify));
+
     /* Root directory inode for /dev */
     inode_t *device_root = malloc(sizeof(inode_t));
     KERNEL_ASSERT(device_root != NULL);

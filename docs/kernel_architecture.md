@@ -17,7 +17,7 @@ not retained as a build option.
 | Threads | `sys/scheduler.c`, `sys/switch.S` | No scheduler lock crosses a stack switch |
 | Processes | `sys/process.c`, `sys/user.c` | Wait owns zombie collection after off-CPU reaping |
 | ELF | `sys/elf_loader.c` | Validated static AArch64 images; unpublished rollback |
-| ABI | `sys/syscalls.c`, `include/kernel/linux_abi.h` | Linux ARM numbers/layouts; checked-copy boundary |
+| ABI | `sys/syscalls.c`, `include/kernel/syscall_abi.h` | Linux ARM numbers/layouts; checked-copy boundary |
 | Files | `fs/vfs.c`, `fs/tmpfs.c`, `fs/devfs.c`, `fs/pipe.c`, `fs/init.c` | Refcounted inodes/open descriptions; process-owned slots |
 | Diagnostics | `debug/exception.c`, `debug/panic.c` | Allocation-free fatal paths; SMP ownership |
 | Normal startup | `sys/startup.c`, `../userspace/init/init.c` | Start CPUs/filesystems and one init; no validation workers |
@@ -75,7 +75,12 @@ bank and integer registers before ERET. TPIDR_EL0 is saved per thread for musl T
 `arm64_elf_load` returns an unpublished process and CREATED thread owned by its
 caller. The caller must attach the process to a live parent before making its
 thread ready. Cancelling an unpublished thread precedes destroying its process.
-A loaded process has one user thread; user clone/fork are not implemented.
+A loaded process has one user thread. Fork-style Linux clone accepts SIGCHLD,
+CHILD_SETTID and CHILD_CLEARTID, with a null child stack; all other sharing/thread
+flags are rejected. Reservations and resident frames are eagerly copied, including
+PROT_NONE backing; integer/SIMD/TLS state is inherited and child x0 is zero.
+Descriptor slots (including CLOEXEC) and referenced CWD are inherited. Child-TID
+stores are checked; exit clears clear_child_tid, without futex wake support.
 
 The process-tree lock protects parent pointers, child lists and completion state.
 It is never acquired under the scheduler-state lock. Wait releases it before
@@ -117,15 +122,31 @@ implementation.
 
 Parents inherit referenced CWD/open descriptions; CLOEXEC slots are excluded when
 loading the child image. Root init gets independent terminal descriptors 0–2.
-There is no executable filesystem lookup or execve syscall yet: the boot coordinator
-loads the embedded static ELF through the same loader API.
+Normal startup loads `/sbin/init` by VFS path; init then execs `/bin/sh` (BusyBox).
+The boot filesystem is seeded from embedded ELF bytes; programs thereafter use
+ordinary VFS files. Exec copies bounded path/argv/envp into kernel storage and
+prepares a complete unpublished replacement before committing. It keeps the
+original process/PID/parent/CWD and open descriptions, closes CLOEXEC slots only
+on success, resets TLS/clear-child-TID, switches roots with IRQs masked, then frees
+the old address space and enters the new image on the existing kernel stack.
+Failures preserve the current image/descriptors and return errno. Missing files,
+non-executable files, malformed ELF, argument limits and allocation failure are
+distinguished. Argv/envp each allow 32 entries and share 2400 string bytes.
 
 ## Filesystem ownership and concurrency
 
 The shared VFS mounts tmpfs at `/` and devfs at `/dev`; `/tmp` is created during
 userspace startup. Filesystem code depends on the heap and the canonical VFS interfaces.
 The ARM tty uses length-delimited PL011 writes; normal writes serialize output,
-while emergency panic output remains lock-free. TTY input currently reports EOF.
+while emergency panic output remains lock-free. TTY input uses a 256-byte PL011 receive FIFO. Empty reads block on a scheduler
+wait queue; nonblocking reads return EAGAIN and zero-length reads return zero.
+The IRQ driver invokes a devfs wake callback after releasing its buffer lock;
+the wait predicate observes the published count without acquiring that lock.
+The shared terminal supports canonical lines, echo, CR-to-NL, erase, kill and EOF,
+plus raw reads with VMIN=1/VTIME=0. TCGETS/TCSETS/TCSETSW/TCSETSF use the Linux
+36-byte layout; setters preserve caller buffers and TCSETSF flushes queued input.
+OPOST+ONLCR control output CR/LF translation. Other termios flag behavior,
+signal keys, timed reads, and job control are not implemented.
 
 A descriptor slot owns one reference to an open description; each description
 owns one inode reference. Duplication/inheritance share positions and status flags.
@@ -164,16 +185,21 @@ The ARM stat structure is 128 bytes, with compile-time size/offset checks.
 | Completion | 93 exit, 94 exit_group, 260 wait4 (no rusage) |
 | Identity | 160 uname, 166 umask, 172/173 getpid/getppid, 174–177 root credential IDs, 178 gettid |
 | Time / scheduling | 101 nanosleep, 113 clock_gettime, 115 clock_nanosleep, 124 sched_yield |
-| Bootstrap support | 96 set_tid_address identity only, 261 read-only stack/descriptor prlimit64, 81 sync, 82/83 fsync/fdatasync |
+| Bootstrap support | 96 set_tid_address registration, 261 read-only stack/descriptor prlimit64, 81 sync, 82/83 fsync/fdatasync |
 
 Unsupported operations return negative errno, usually ENOSYS. Signals, futexes,
-robust lists, clone/fork/execve, rusage, a credential/permission model and dynamic
+robust lists, shared-VM clone/user threads, rusage, a credential/permission model and dynamic
 linking are not implemented. Absolute paths and AT_FDCWD are supported; other
 relative directory descriptors are not. Memory mappings are anonymous/private,
 not file-backed/shared. User mapping placement is a monotonic watermark and can
 leave gaps on failure. Realtime currently reports monotonic uptime; there is no RTC
 wall-clock source. Sleep yields rather than using a timer wait queue. The bootstrap
 set_tid_address handler does not implement clear-child-TID wakeups.
+
+Fork/exec validation runs real musl fork/execve/waitpid calls, checking private
+memory/TLS, PID preservation, vector passing, CLOEXEC, failure rollback and stable
+post-warmup live-object/non-cache frame counts. The normal boot checker runs upstream BusyBox shell
+commands, external ELF launches, redirection and pipelines on one/four CPUs.
 
 ## Verification and build policy
 
@@ -214,7 +240,7 @@ together; do not add a blank line after every statement. Clang-format preserves
 these section breaks, but choosing them requires a readability review.
 
 Use descriptive identifiers, named ABI/register fields and short function
-contracts. `linux_abi.h` owns implemented Linux syscall numbers and shared terminal
+contracts. `syscall_abi.h` owns implemented Linux syscall numbers and shared terminal
 wire constants; `arm64_mmu.h` owns shared translation geometry and PTE fields.
 Tests may retain literal input/expected ABI values to check the implementation
 independently. Architectural register names and standard ABI field names retain
@@ -225,3 +251,18 @@ has no filesystem, scheduler-call or exception-dispatch dependency. Process
 creation/destruction belong to `sys/process.c`; TTBR/TLS switching, EL0 entry and
 exception handling belong to `sys/user.c`. Address-space roots are borrowed;
 only unpublished or fully off-CPU spaces may be destroyed.
+
+## Kernel identity and version
+
+`kernel/include/kernel/version.h` owns the Aether name and major/minor release
+policy. Major is 0 during initial development; the current minor release is 1.
+Each build generates one shared metadata header with the first twelve characters
+of HEAD and a UTC build timestamp. The kernel banner and uname release both use
+`0.1-<commit>-YYYY-MM-DDTHH:MM:SSZ`. The uname version field carries the timestamp;
+sysname and nodename are Aether, and machine is aarch64. BusyBox's configurable
+uname operating-system label reads the same central name.
+
+`SOURCE_DATE_EPOCH` pins the timestamp for reproducible builds. Metadata is checked
+on every build invocation and rewritten only if changed. A source tree without Git
+uses `unknown` in place of the revision. No compatibility identity override is
+currently required; programs receive Aether by default.

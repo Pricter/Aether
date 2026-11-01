@@ -1,11 +1,12 @@
-/* Linux AArch64 syscall boundary. User pointers are never passed to the VFS:
+/* AArch64 syscall boundary. User pointers are never passed to the VFS:
  * paths and I/O travel through checked copies and bounded kernel buffers. */
 #include <kernel/userspace.h>
 #include <kernel/cpu.h>
 #include <kernel/strings.h>
 #include <kernel/time.h>
 #include <kernel/heap.h>
-#include <kernel/linux_abi.h>
+#include <kernel/syscall_abi.h>
+#include <kernel/version.h>
 #include <kernel/page_memory.h>
 
 #define USER_IO_CHUNK 4096UL
@@ -14,8 +15,8 @@
 #define MAP_ANONYMOUS 0x20UL
 #define MAP_FIXED_NOREPLACE 0x100000UL
 
-/* Linux AArch64 uses the 128-byte asm-generic stat wire layout. */
-struct linux_arm64_stat {
+/* AArch64 uses the 128-byte asm-generic stat wire layout. */
+struct abi_stat {
     uint64_t device, inode_number;
     uint32_t mode, link_count, owner, group;
     uint64_t special_device, reserved;
@@ -31,17 +32,17 @@ struct linux_arm64_stat {
     uint32_t unused[2];
 };
 
-struct linux_vector {
+struct abi_iovec {
     uintptr_t base;
     size_t length;
 };
 
-struct linux_time {
+struct abi_timespec {
     int64_t seconds, nanoseconds;
 };
 
-_Static_assert(sizeof(struct linux_arm64_stat) == 128, "AArch64 stat wire size");
-_Static_assert(__builtin_offsetof(struct linux_arm64_stat, size) == 48, "stat size offset");
+_Static_assert(sizeof(struct abi_stat) == 128, "AArch64 stat wire size");
+_Static_assert(__builtin_offsetof(struct abi_stat, size) == 48, "stat size offset");
 
 /* Scan one byte at a time to stop at NUL before inspecting the next page. */
 static errno_t copy_user_path(process_t *process, uintptr_t address, char *path) {
@@ -127,19 +128,18 @@ static long transfer_io(process_t *process, int descriptor, uintptr_t address, s
 /* Keep vector metadata in kernel memory across each individual transfer. */
 static long transfer_vectors(
     process_t *process, int descriptor, uintptr_t address, long vector_count, bool write_file) {
-    if (vector_count < 0 || vector_count > LINUX_IOV_MAX) {
+    if (vector_count < 0 || vector_count > ABI_IOV_MAX) {
         return -EINVAL;
     }
 
-    if (!arm64_user_range(
-            process, address, vector_count * sizeof(struct linux_vector), PROT_READ)) {
+    if (!arm64_user_range(process, address, vector_count * sizeof(struct abi_iovec), PROT_READ)) {
         return -EFAULT;
     }
 
     long total_bytes = 0;
 
     for (long vector_index = 0; vector_index < vector_count; ++vector_index) {
-        struct linux_vector vector;
+        struct abi_iovec vector;
 
         if (!arm64_user_copy(process, address + vector_index * sizeof(vector), &vector,
                 sizeof(vector), false, false)) {
@@ -168,7 +168,7 @@ static long transfer_vectors(
 
 /* Explicit conversion leaves timestamps/reserved fields initialized to zero. */
 static long copy_stat_result(process_t *process, uintptr_t address, const vfs_stat_t *metadata) {
-    struct linux_arm64_stat result = {0};
+    struct abi_stat result = {0};
     result.inode_number = metadata->ino;
     result.mode = metadata->mode;
     result.link_count = metadata->nlink;
@@ -182,7 +182,7 @@ static long copy_stat_result(process_t *process, uintptr_t address, const vfs_st
     return arm64_user_copy(process, address, &result, sizeof(result), true, false) ? 0 : -EFAULT;
 }
 
-/* linux_dirent64 has a 19-byte fixed prefix and 8-byte record alignment. */
+/* dirent64 has a 19-byte fixed prefix and 8-byte record alignment. */
 enum {
     DIRENT_INODE_OFFSET = 0,
     DIRENT_POSITION_OFFSET = 8,
@@ -196,7 +196,7 @@ enum {
     MODE_TYPE_SHIFT = 12,
 };
 
-/* Pack Linux dirents and retain the VFS enumeration position if one won't fit. */
+/* Pack directory entries and retain the VFS enumeration position if one won't fit. */
 static long read_directory(process_t *process, int descriptor, uintptr_t address, size_t length) {
     if (!arm64_user_range(process, address, length, PROT_WRITE)) {
         return -EFAULT;
@@ -254,7 +254,7 @@ static long read_directory(process_t *process, int descriptor, uintptr_t address
     return used ? (long)used : length < DIRENT_MINIMUM_SIZE ? -EINVAL : 0;
 }
 
-/* Linux distinguishes exact fixed mappings from advisory placement hints. */
+/* The ABI distinguishes exact fixed mappings from advisory placement hints. */
 static long map_anonymous(process_t *process, const unsigned long *arguments) {
     uintptr_t address = arguments[0];
     size_t length = arguments[1];
@@ -269,8 +269,8 @@ static long map_anonymous(process_t *process, const unsigned long *arguments) {
         return -ENOSYS;
     }
 
-    if (flags & ~(MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED | MAP_FIXED_NOREPLACE | LINUX_MAP_STACK |
-                    LINUX_MAP_UNINITIALIZED)) {
+    if (flags & ~(MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED | MAP_FIXED_NOREPLACE | ABI_MAP_STACK |
+                    ABI_MAP_UNINITIALIZED)) {
         return -EINVAL;
     }
 
@@ -332,12 +332,12 @@ static long change_break(process_t *process, uintptr_t requested) {
 /* Only known ioctl layouts cross the boundary. The device sees a kernel buffer. */
 static long terminal_control(
     process_t *process, int descriptor, unsigned long request, uintptr_t address) {
-    unsigned char buffer[LINUX_TERMIOS_SIZE] = {0};
-    bool output = request == LINUX_TCGETS || request == LINUX_TIOCGWINSZ;
-    size_t length = request == LINUX_TIOCGWINSZ ? LINUX_WINSIZE_SIZE : LINUX_TERMIOS_SIZE;
+    unsigned char buffer[ABI_TERMIOS_SIZE] = {0};
+    bool output = request == ABI_TCGETS || request == ABI_TIOCGWINSZ;
+    size_t length = request == ABI_TIOCGWINSZ ? ABI_WINSIZE_SIZE : ABI_TERMIOS_SIZE;
 
-    if (request != LINUX_TCGETS && request != LINUX_TIOCGWINSZ && request != LINUX_TCSETSW &&
-        request != LINUX_TCSETSF) {
+    if (request != ABI_TCGETS && request != ABI_TIOCGWINSZ && request != ABI_TCSETS &&
+        request != ABI_TCSETSW && request != ABI_TCSETSF) {
         return -ENOTTY;
     }
 
@@ -367,7 +367,7 @@ long arm64_syscall_dispatch(arm64_exception_frame_t *frame) {
     errno_t status;
 
     switch (arguments[8]) {
-    case LINUX_SYS_GETCWD: /* getcwd returns bytes including NUL on Linux. */
+    case SYS_GETCWD: /* getcwd returns bytes including NUL by the ABI. */
         status = vfs_getcwd(process, path, sizeof(path));
 
         if (status < 0) {
@@ -381,37 +381,37 @@ long arm64_syscall_dispatch(arm64_exception_frame_t *frame) {
         return arm64_user_copy(process, arguments[0], path, strlen(path) + 1, true, false)
                    ? (long)strlen(path) + 1
                    : -EFAULT;
-    case LINUX_SYS_DUP: {
+    case SYS_DUP: {
         int result;
         status = vfs_dup(process, descriptor, &result);
 
         return status < 0 ? status : result;
     }
 
-    case LINUX_SYS_DUP3:
+    case SYS_DUP3:
         status = vfs_dup3(process, descriptor, (int)arguments[1], arguments[2]);
 
         return status < 0 ? status : (int)arguments[1];
-    case LINUX_SYS_FCNTL: {
+    case SYS_FCNTL: {
         int result;
         status = vfs_fcntl(process, descriptor, arguments[1], arguments[2], &result);
 
         return status < 0 ? status : result;
     }
 
-    case LINUX_SYS_IOCTL:
+    case SYS_IOCTL:
         return terminal_control(process, descriptor, arguments[1], arguments[2]);
-    case LINUX_SYS_MKDIRAT:
-    case LINUX_SYS_UNLINKAT:
-    case LINUX_SYS_FACCESSAT:
-    case LINUX_SYS_OPENAT: { /* *at: support absolute paths and AT_FDCWD. */
+    case SYS_MKDIRAT:
+    case SYS_UNLINKAT:
+    case SYS_FACCESSAT:
+    case SYS_OPENAT: { /* *at: support absolute paths and AT_FDCWD. */
         status = copy_user_path(process, arguments[1], path);
 
         if (status < 0) {
             return status;
         }
 
-        if (arguments[8] == LINUX_SYS_OPENAT) {
+        if (arguments[8] == SYS_OPENAT) {
             int result;
             status = vfs_openat(process, descriptor, path, arguments[2], arguments[3], &result);
 
@@ -422,23 +422,23 @@ long arm64_syscall_dispatch(arm64_exception_frame_t *frame) {
             return -ENOSYS;
         }
 
-        if (arguments[8] == LINUX_SYS_MKDIRAT) {
+        if (arguments[8] == SYS_MKDIRAT) {
             return vfs_mkdir(process, path, arguments[2]);
         }
 
-        if (arguments[8] == LINUX_SYS_FACCESSAT) {
+        if (arguments[8] == SYS_FACCESSAT) {
             return vfs_access(process, path, arguments[2]);
         }
 
-        if (arguments[2] & ~LINUX_AT_REMOVEDIR) {
+        if (arguments[2] & ~ABI_AT_REMOVEDIR) {
             return -EINVAL;
         }
 
-        return arguments[2] & LINUX_AT_REMOVEDIR ? vfs_rmdir(process, path)
-                                                 : vfs_unlink(process, path);
+        return arguments[2] & ABI_AT_REMOVEDIR ? vfs_rmdir(process, path)
+                                               : vfs_unlink(process, path);
     }
 
-    case LINUX_SYS_RENAMEAT: { /* renameat */
+    case SYS_RENAMEAT: { /* renameat */
         char destination[PATH_MAX];
         status = copy_user_path(process, arguments[1], path);
 
@@ -460,24 +460,24 @@ long arm64_syscall_dispatch(arm64_exception_frame_t *frame) {
         return vfs_rename(process, path, destination);
     }
 
-    case LINUX_SYS_TRUNCATE:
-    case LINUX_SYS_CHDIR:
+    case SYS_TRUNCATE:
+    case SYS_CHDIR:
         status = copy_user_path(process, arguments[0], path);
 
         if (status < 0) {
             return status;
         }
 
-        if (arguments[8] == LINUX_SYS_CHDIR) {
+        if (arguments[8] == SYS_CHDIR) {
             return vfs_chdir(process, path);
         }
 
         return (long)arguments[1] < 0 ? -EINVAL : vfs_truncate(process, path, arguments[1]);
-    case LINUX_SYS_FTRUNCATE:
+    case SYS_FTRUNCATE:
         return (long)arguments[1] < 0 ? -EINVAL : vfs_ftruncate(process, descriptor, arguments[1]);
-    case LINUX_SYS_CLOSE:
+    case SYS_CLOSE:
         return vfs_close(process, descriptor);
-    case LINUX_SYS_PIPE2: { /* Roll back both descriptors if result publication fails. */
+    case SYS_PIPE2: { /* Roll back both descriptors if result publication fails. */
         if (!arm64_user_range(process, arguments[0], 2 * sizeof(int), PROT_WRITE)) {
             return -EFAULT;
         }
@@ -499,38 +499,37 @@ long arm64_syscall_dispatch(arm64_exception_frame_t *frame) {
         return -EFAULT;
     }
 
-    case LINUX_SYS_GETDENTS64:
+    case SYS_GETDENTS64:
         return read_directory(process, descriptor, arguments[1], arguments[2]);
-    case LINUX_SYS_LSEEK: {
+    case SYS_LSEEK: {
         int64_t position;
         status = vfs_seek(process, descriptor, arguments[1], arguments[2], &position);
 
         return status < 0 ? status : position;
     }
 
-    case LINUX_SYS_READ:
-    case LINUX_SYS_WRITE:
-        return transfer_io(process, descriptor, arguments[1], arguments[2],
-            arguments[8] == LINUX_SYS_WRITE, false, 0);
-    case LINUX_SYS_READV:
-    case LINUX_SYS_WRITEV:
+    case SYS_READ:
+    case SYS_WRITE:
+        return transfer_io(
+            process, descriptor, arguments[1], arguments[2], arguments[8] == SYS_WRITE, false, 0);
+    case SYS_READV:
+    case SYS_WRITEV:
         return transfer_vectors(
-            process, descriptor, arguments[1], arguments[2], arguments[8] == LINUX_SYS_WRITEV);
-    case LINUX_SYS_PREAD64:
-    case LINUX_SYS_PWRITE64:
+            process, descriptor, arguments[1], arguments[2], arguments[8] == SYS_WRITEV);
+    case SYS_PREAD64:
+    case SYS_PWRITE64:
         return transfer_io(process, descriptor, arguments[1], arguments[2],
-            arguments[8] == LINUX_SYS_PWRITE64, true, arguments[3]);
-    case LINUX_SYS_NEWFSTATAT:
-    case LINUX_SYS_FSTAT: {
+            arguments[8] == SYS_PWRITE64, true, arguments[3]);
+    case SYS_NEWFSTATAT:
+    case SYS_FSTAT: {
         vfs_stat_t metadata;
-        uintptr_t output_address = arguments[8] == LINUX_SYS_FSTAT ? arguments[1] : arguments[2];
+        uintptr_t output_address = arguments[8] == SYS_FSTAT ? arguments[1] : arguments[2];
 
-        if (!arm64_user_range(
-                process, output_address, sizeof(struct linux_arm64_stat), PROT_WRITE)) {
+        if (!arm64_user_range(process, output_address, sizeof(struct abi_stat), PROT_WRITE)) {
             return -EFAULT;
         }
 
-        if (arguments[8] == LINUX_SYS_FSTAT) {
+        if (arguments[8] == SYS_FSTAT) {
             status = vfs_fstat(process, descriptor, &metadata);
         } else {
             if (arguments[3] & ~(AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW)) {
@@ -549,31 +548,35 @@ long arm64_syscall_dispatch(arm64_exception_frame_t *frame) {
         return status < 0 ? status : copy_stat_result(process, output_address, &metadata);
     }
 
-    case LINUX_SYS_SYNC:
+    case SYS_SYNC:
         return 0; /* sync: current filesystems are memory-backed. */
-    case LINUX_SYS_FSYNC:
-    case LINUX_SYS_FDATASYNC: {
+    case SYS_FSYNC:
+    case SYS_FDATASYNC: {
         int result;
 
         return vfs_fcntl(process, descriptor, F_GETFL, 0, &result);
     }
 
-    case LINUX_SYS_EXIT:
-    case LINUX_SYS_EXIT_GROUP:
+    case SYS_CLONE:
+        return arm64_process_clone(frame);
+    case SYS_EXECVE:
+        return arm64_process_exec(frame);
+    case SYS_EXIT:
+    case SYS_EXIT_GROUP:
         arm64_process_exit(arguments[0], false);
-    case LINUX_SYS_SET_TID_ADDRESS:
-        return this_cpu()->current_thread->tid; /* no clone/clear-child-TID yet */
-    case LINUX_SYS_SET_ROBUST_LIST:
+    case SYS_SET_TID_ADDRESS:
+        this_cpu()->current_thread->clear_child_tid = arguments[0];
+        return this_cpu()->current_thread->tid;
+    case SYS_SET_ROBUST_LIST:
         return -ENOSYS; /* robust-list ownership requires user threads */
-    case LINUX_SYS_NANOSLEEP:
-    case LINUX_SYS_CLOCK_NANOSLEEP: { /* nanosleep / clock_nanosleep */
-        unsigned int clock_id =
-            arguments[8] == LINUX_SYS_NANOSLEEP ? LINUX_CLOCK_MONOTONIC : arguments[0];
-        unsigned long flags = arguments[8] == LINUX_SYS_NANOSLEEP ? 0 : arguments[1];
-        uintptr_t request = arguments[8] == LINUX_SYS_NANOSLEEP ? arguments[0] : arguments[2];
-        struct linux_time duration;
+    case SYS_NANOSLEEP:
+    case SYS_CLOCK_NANOSLEEP: { /* nanosleep / clock_nanosleep */
+        unsigned int clock_id = arguments[8] == SYS_NANOSLEEP ? ABI_CLOCK_MONOTONIC : arguments[0];
+        unsigned long flags = arguments[8] == SYS_NANOSLEEP ? 0 : arguments[1];
+        uintptr_t request = arguments[8] == SYS_NANOSLEEP ? arguments[0] : arguments[2];
+        struct abi_timespec duration;
 
-        if (clock_id > LINUX_CLOCK_MONOTONIC || flags & ~LINUX_TIMER_ABSTIME) {
+        if (clock_id > ABI_CLOCK_MONOTONIC || flags & ~ABI_TIMER_ABSTIME) {
             return -EINVAL;
         }
 
@@ -590,7 +593,7 @@ long arm64_syscall_dispatch(arm64_exception_frame_t *frame) {
 
         uint64_t deadline = duration.seconds * NANOSECONDS_PER_SECOND + duration.nanoseconds;
 
-        if (!(flags & LINUX_TIMER_ABSTIME)) {
+        if (!(flags & ABI_TIMER_ABSTIME)) {
             uint64_t now = ktime_get_ns();
 
             if (deadline > UINT64_MAX - now) {
@@ -606,37 +609,37 @@ long arm64_syscall_dispatch(arm64_exception_frame_t *frame) {
         return 0;
     }
 
-    case LINUX_SYS_CLOCK_GETTIME: { /* clock_gettime: monotonic epoch for realtime until an RTC exists. */
-        if (arguments[0] != LINUX_CLOCK_REALTIME && arguments[0] != LINUX_CLOCK_MONOTONIC &&
-            arguments[0] != LINUX_CLOCK_MONOTONIC_RAW &&
-            arguments[0] != LINUX_CLOCK_MONOTONIC_COARSE) {
+    case SYS_CLOCK_GETTIME: { /* clock_gettime: monotonic epoch for realtime until an RTC exists. */
+        if (arguments[0] != ABI_CLOCK_REALTIME && arguments[0] != ABI_CLOCK_MONOTONIC &&
+            arguments[0] != ABI_CLOCK_MONOTONIC_RAW && arguments[0] != ABI_CLOCK_MONOTONIC_COARSE) {
             return -EINVAL;
         }
 
         uint64_t now = ktime_get_ns();
-        struct linux_time result = {now / NANOSECONDS_PER_SECOND, now % NANOSECONDS_PER_SECOND};
+        struct abi_timespec result = {now / NANOSECONDS_PER_SECOND, now % NANOSECONDS_PER_SECOND};
 
         return arm64_user_copy(process, arguments[1], &result, sizeof(result), true, false)
                    ? 0
                    : -EFAULT;
     }
 
-    case LINUX_SYS_SCHED_YIELD:
+    case SYS_SCHED_YIELD:
         schedule();
 
         return 0;
-    case LINUX_SYS_RT_SIGACTION:
-    case LINUX_SYS_RT_SIGPROCMASK:
-        return -ENOSYS;     /* no pretend-success signal implementation */
-    case LINUX_SYS_UNAME: { /* uname: six Linux fields, 65 bytes each. */
-        char identity[LINUX_UNAME_FIELD_COUNT][LINUX_UNAME_FIELD_SIZE] = {
-            "Aether", "aether", "0.1", "ARM userspace", "aarch64", "(none)"};
+    case SYS_RT_SIGACTION:
+    case SYS_RT_SIGPROCMASK:
+        return -ENOSYS; /* no pretend-success signal implementation */
+    case SYS_UNAME: {   /* uname: six ABI fields, 65 bytes each. */
+        _Static_assert(sizeof(KERNEL_VERSION) <= ABI_UNAME_FIELD_SIZE, "release fits uname");
+        char identity[ABI_UNAME_FIELD_COUNT][ABI_UNAME_FIELD_SIZE] = {
+            OS_NAME, OS_NODE_NAME, KERNEL_VERSION, KERNEL_BUILD_TIMESTAMP, OS_MACHINE, "(none)"};
         return arm64_user_copy(process, arguments[0], identity, sizeof(identity), true, false)
                    ? 0
                    : -EFAULT;
     }
 
-    case LINUX_SYS_UMASK: {
+    case SYS_UMASK: {
         bool interrupts_enabled = spinlock_acquire(&process->lock);
         unsigned int previous = process->umask;
         process->umask = arguments[0] & 0777;
@@ -645,20 +648,20 @@ long arm64_syscall_dispatch(arm64_exception_frame_t *frame) {
         return previous;
     }
 
-    case LINUX_SYS_GETPID:
+    case SYS_GETPID:
         return process->pid;
-    case LINUX_SYS_GETPPID:
+    case SYS_GETPPID:
         return arm64_process_parent_pid(process);
-    case LINUX_SYS_GETUID:
-    case LINUX_SYS_GETEUID:
-    case LINUX_SYS_GETGID:
-    case LINUX_SYS_GETEGID:
+    case SYS_GETUID:
+    case SYS_GETEUID:
+    case SYS_GETGID:
+    case SYS_GETEGID:
         return 0;
-    case LINUX_SYS_GETTID:
+    case SYS_GETTID:
         return this_cpu()->current_thread->tid;
-    case LINUX_SYS_BRK:
+    case SYS_BRK:
         return change_break(process, arguments[0]);
-    case LINUX_SYS_MUNMAP:
+    case SYS_MUNMAP:
         if ((arguments[0] & (KERNEL_PAGE_SIZE - 1)) || !arguments[1] ||
             arguments[1] > ARM64_USER_LIMIT - (KERNEL_PAGE_SIZE - 1)) {
             return -EINVAL;
@@ -668,11 +671,11 @@ long arm64_syscall_dispatch(arm64_exception_frame_t *frame) {
                    (arguments[1] + (KERNEL_PAGE_SIZE - 1)) & ~(KERNEL_PAGE_SIZE - 1))
                    ? 0
                    : -EINVAL;
-    case LINUX_SYS_MMAP:
+    case SYS_MMAP:
         return map_anonymous(process, arguments);
-    case LINUX_SYS_MPROTECT:
+    case SYS_MPROTECT:
         return process_mprotect(process, arguments[0], arguments[1], arguments[2]);
-    case LINUX_SYS_WAIT4: {
+    case SYS_WAIT4: {
         if (arguments[1] && !arm64_user_range(process, arguments[1], sizeof(int), PROT_WRITE)) {
             return -EFAULT;
         }
@@ -696,7 +699,7 @@ long arm64_syscall_dispatch(arm64_exception_frame_t *frame) {
         return child;
     }
 
-    case LINUX_SYS_PRLIMIT64: { /* prlimit64: read-only reporting, reject unsupported mutations. */
+    case SYS_PRLIMIT64: { /* prlimit64: read-only reporting, reject unsupported mutations. */
         if (arguments[0] && arguments[0] != (unsigned long)process->pid) {
             return -ESRCH;
         }
@@ -707,9 +710,9 @@ long arm64_syscall_dispatch(arm64_exception_frame_t *frame) {
 
         uint64_t limits[2];
 
-        if (arguments[1] == LINUX_RLIMIT_STACK) {
+        if (arguments[1] == ABI_RLIMIT_STACK) {
             limits[0] = limits[1] = USTACK_SIZE;
-        } else if (arguments[1] == LINUX_RLIMIT_NOFILE) {
+        } else if (arguments[1] == ABI_RLIMIT_NOFILE) {
             limits[0] = limits[1] = FD_TABLE_SIZE;
         } else {
             return -EINVAL;

@@ -4,6 +4,7 @@
 #include <kernel/mmu.h>
 #include <kernel/runtime.h>
 #include <kernel/cpu.h>
+#include <kernel/version.h>
 
 volatile unsigned long arm64_bss_probe;
 
@@ -228,7 +229,8 @@ __attribute__((noreturn)) void arm64_early_main(
         arm64_idle();
     }
 
-    platform_serial_write("Aether ARM64 booted\n");
+    platform_serial_write(OS_NAME " ARM64 booted\n");
+    platform_serial_write(OS_NAME " kernel " KERNEL_VERSION "\n");
     platform_serial_write("EL1; stack aligned; BSS cleared; MMU off\n");
 
     /* The bootloader must supply a readable, 8-byte-aligned DTB no larger

@@ -59,7 +59,7 @@ typedef struct thread {
     context_regs_t context;
     uintptr_t kstack_top, kstack_bottom, ustack_top;
     cpu_id_t owner_cpu;
-    uintptr_t user_entry, user_tls;
+    uintptr_t user_entry, user_tls, clear_child_tid;
     bool on_cpu;
     list_node_t list_node; /* ready/dead list; protected by scheduler state */
     list_node_t wq_node;   /* wait list; protected by scheduler state */

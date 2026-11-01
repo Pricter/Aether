@@ -319,3 +319,18 @@ void slab_init(void) {
 
     heap_ready = true;
 }
+
+void heap_snapshot(heap_snapshot_t *snapshot) {
+    KERNEL_ASSERT(heap_ready && !kernel_interrupt_depth() && !kernel_spinlock_depth());
+    _Static_assert(sizeof(caches) / sizeof(caches[0]) == HEAP_CACHE_COUNT, "heap cache count");
+    __builtin_memset(snapshot, 0, sizeof(*snapshot));
+
+    for (size_t index = 0; index < HEAP_CACHE_COUNT; ++index) {
+        bool interrupts = spinlock_acquire(&caches[index].lock);
+        for (struct slab_page *page = caches[index].pages; page; page = page->next) {
+            ++snapshot->retained_pages;
+            snapshot->live_objects[index] += page->inuse;
+        }
+        spinlock_release(&caches[index].lock, interrupts);
+    }
+}

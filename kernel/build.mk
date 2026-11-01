@@ -23,6 +23,7 @@ KERNEL_CFLAGS := --target=aarch64-none-elf -march=armv8-a -mgeneral-regs-only
 KERNEL_CFLAGS += -mstrict-align
 KERNEL_CFLAGS += -ffreestanding -fno-builtin -fno-stack-protector -fno-pic
 KERNEL_CFLAGS += -fno-omit-frame-pointer -MMD -MP
+KERNEL_CFLAGS += -I$(BUILD_DIR)/generated
 KERNEL_CFLAGS += -nostdinc -Ikernel/include -Ibase/usr/include -Wall -Wextra -Werror -O2 -g
 ifeq ($(KERNEL_SELF_TESTS),1)
 KERNEL_CFLAGS += -DKERNEL_SELF_TESTS
@@ -145,7 +146,7 @@ $(BUILD_DIR)/early-mmu-readonly.o: ARM64_MMU_TEST_FLAGS = -DARM64_TEST_MMU_READO
 $(BUILD_DIR)/early-mmu-execute.o: ARM64_MMU_TEST_FLAGS = -DARM64_TEST_MMU_EXECUTE
 $(BUILD_DIR)/early-mmu-rollback.o: ARM64_MMU_TEST_FLAGS = -DARM64_TEST_MMU_ROLLBACK
 
-$(BUILD_DIR)/early-mmu-%.o: kernel/kernel.c kernel/build.mk | $(BUILD_DIR)
+$(BUILD_DIR)/early-mmu-%.o: kernel/kernel.c kernel/build.mk $(BUILD_DIR)/generated/kernel/build_version.h | $(BUILD_DIR)
 	$(CC) $(KERNEL_CFLAGS) $(ARM64_MMU_TEST_FLAGS) -c $< -o $@
 
 $(BUILD_DIR)/mmu-%.Image: $(filter-out $(BUILD_DIR)/early.o,$(KERNEL_OBJECTS)) $(BUILD_DIR)/early-mmu-%.o kernel/linker.ld
@@ -299,11 +300,17 @@ check-arm64-user: check-arm64 check-arm64-smp
 endif
 
 ZIG ?= zig
-$(BUILD_DIR)/init.elf: $(INIT_SOURCE) | $(BUILD_DIR)
+USERSPACE_TARGET := $(strip $(shell cat docs/userspace-target.txt))
+$(BUILD_DIR)/init.elf: $(INIT_SOURCE) docs/userspace-target.txt | $(BUILD_DIR)
 	mkdir -p build/zig-cache build/zig-local
-	ZIG_GLOBAL_CACHE_DIR=$(CURDIR)/build/zig-cache ZIG_LOCAL_CACHE_DIR=$(CURDIR)/build/zig-local $(ZIG) cc -target aarch64-linux-musl -static -fno-pie -Wl,-no-pie -Wl,-z,max-page-size=4096 -O2 -g -Wall -Wextra -Werror $< -o $@
-$(BUILD_DIR)/init-embed.o: kernel/init/embed.S $(BUILD_DIR)/init.elf
-	$(CC) $(KERNEL_CFLAGS) -DARM64_INIT_IMAGE_PATH='"$(BUILD_DIR)/init.elf"' -c $< -o $@
+	ZIG_GLOBAL_CACHE_DIR=$(CURDIR)/build/zig-cache ZIG_LOCAL_CACHE_DIR=$(CURDIR)/build/zig-local $(ZIG) cc -target $(USERSPACE_TARGET) -static -fno-pie -Wl,-no-pie -Wl,-z,max-page-size=4096 -O2 -g -Wall -Wextra -Werror $< -o $@
+ifeq ($(KERNEL_SELF_TESTS),1)
+BUSYBOX_DEPENDENCY :=
+else
+BUSYBOX_DEPENDENCY := build/vendor/busybox-1.36.1/busybox
+endif
+$(BUILD_DIR)/init-embed.o: kernel/init/embed.S $(BUILD_DIR)/init.elf $(BUSYBOX_DEPENDENCY)
+	$(CC) $(KERNEL_CFLAGS) -DARM64_BUSYBOX_IMAGE_PATH='"build/vendor/busybox-1.36.1/busybox"' -DARM64_INIT_IMAGE_PATH='"$(BUILD_DIR)/init.elf"' -c $< -o $@
 $(BUILD_DIR)/fs-%.o: kernel/fs/%.c
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 $(BUILD_DIR)/strings.o: kernel/libc/strings.c
@@ -338,3 +345,15 @@ $(BUILD_DIR)/panic.o: kernel/debug/panic.c
 
 $(BUILD_DIR)/user-execution.o: kernel/sys/user.c
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+.PHONY: busybox
+busybox: build/vendor/busybox-1.36.1/busybox
+build/vendor/busybox-1.36.1/busybox: util/build-busybox.py util/busybox-cc.py docs/userspace-target.txt kernel/include/kernel/version.h
+	python3 util/build-busybox.py
+
+# One metadata snapshot is shared by early boot and uname within this build.
+.PHONY: force-kernel-version
+force-kernel-version:
+$(BUILD_DIR)/generated/kernel/build_version.h: force-kernel-version util/kernel-version.py
+	python3 util/kernel-version.py $@
+$(BUILD_DIR)/early.o $(BUILD_DIR)/early-fault.o $(BUILD_DIR)/syscalls.o: $(BUILD_DIR)/generated/kernel/build_version.h

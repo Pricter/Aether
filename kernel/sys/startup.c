@@ -16,8 +16,11 @@ static void startup_coordinator(void) {
     platform_serial_write("CPUs and filesystems ready\nStarting /sbin/init\n");
 
     thread_t *init_thread;
-    process_t *init_process = arm64_elf_load(arm64_init_image,
-        arm64_init_image_end - arm64_init_image, "boot", &kernel_process, &init_thread);
+    process_t *init_process;
+    const char *arguments[] = {"/sbin/init", "boot", NULL};
+    const char *environment[] = {"AETHER_ARCH=aarch64", "PATH=/bin:/sbin", "PS1=aether> ", NULL};
+    KERNEL_ASSERT(arm64_elf_load_path(&kernel_process, "/sbin/init", arguments, environment,
+                      &init_process, &init_thread) == EOK);
     KERNEL_ASSERT(init_process && init_thread);
 
     pid_t init_identifier = init_process->pid;

@@ -77,7 +77,7 @@
 #include <kernel/spinlock.h>
 #include <kernel/scheduler.h> /* process_t, fd_table_t */
 
-/* Mode / type bits (Linux-compatible octal values) */
+/* Mode / type bits (ABI octal values) */
 
 #define S_IFMT 0170000u  /* type mask */
 #define S_IFREG 0100000u /* regular file */
@@ -101,7 +101,7 @@
 #define S_IWOTH 00002u
 #define S_IXOTH 00001u
 
-/* open(2) flags (Linux AArch64 values) */
+/* open(2) flags (AArch64 values) */
 
 #define O_RDONLY 0x000
 #define O_WRONLY 0x001
@@ -533,3 +533,8 @@ errno_t vfs_read_at(process_t *process, int descriptor, void *buffer, size_t len
     size_t *completed);
 errno_t vfs_write_at(process_t *process, int descriptor, const void *buffer, size_t length,
     int64_t offset, size_t *completed);
+
+/* Open a regular file read-only without installing a process descriptor.
+ * Normal context; may allocate. Caller owns one file reference and must
+ * file_unref it. Path lookup uses the process CWD; errors leave *file_out NULL. */
+errno_t vfs_open_readonly(process_t *process, const char *path, file_t **file_out);

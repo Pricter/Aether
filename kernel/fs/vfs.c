@@ -1878,3 +1878,38 @@ errno_t vfs_write_at(process_t *process, int descriptor, const void *buffer, siz
 
     return status;
 }
+
+/* Kernel consumers retain a private read-only description without consuming a
+ * user descriptor slot. In particular, exec must work with a full fd table. */
+errno_t vfs_open_readonly(process_t *process, const char *path, file_t **file_out) {
+    *file_out = NULL;
+    char absolute_path[VFS_PATH_MAX];
+
+    if (!make_absolute_path(process, path, absolute_path, sizeof(absolute_path))) {
+        return -ENAMETOOLONG;
+    }
+
+    errno_t status;
+    inode_t *inode = resolve_inode(absolute_path, &status);
+
+    if (!inode) {
+        return status;
+    }
+
+    if (!S_ISREG(inode->mode)) {
+        inode_unref(inode);
+
+        return -EACCES;
+    }
+
+    if (!inode->ops || !inode->ops->open) {
+        inode_unref(inode);
+
+        return -ENOSYS;
+    }
+
+    status = inode->ops->open(inode, O_RDONLY, file_out);
+    inode_unref(inode);
+
+    return status;
+}

@@ -182,26 +182,34 @@ void arm64_user_initialize(void) {
 struct user_address_space *arm64_user_space_create(void) {
     KERNEL_ASSERT(kernel_root);
     struct user_address_space *space = malloc(sizeof(*space));
+
     if (!space) {
         return NULL;
     }
+
     space->root = allocate_table();
     space->level_one = allocate_table();
     space->level_two = allocate_table();
+
     if (!space->root || !space->level_one || !space->level_two) {
         arm64_user_space_destroy(space);
+
         return NULL;
     }
+
     memcpy(space->root, kernel_root, KERNEL_PAGE_SIZE);
     uint64_t *kernel_level_one = page_memory_pointer(kernel_root[0] & PAGE_ADDRESS);
     memcpy(space->level_one, kernel_level_one, KERNEL_PAGE_SIZE);
     uint64_t *kernel_level_two = page_memory_pointer(kernel_level_one[0] & PAGE_ADDRESS);
     memcpy(space->level_two, kernel_level_two, KERNEL_PAGE_SIZE);
+
     for (unsigned int table_index = 0; table_index < USER_LEAF_TABLE_COUNT; ++table_index) {
         KERNEL_ASSERT(!space->level_two[table_index]);
     }
+
     space->root[0] = page_memory_physical(space->level_one) | PAGE_VALID;
     space->level_one[0] = page_memory_physical(space->level_two) | PAGE_VALID;
+
     return space;
 }
 
@@ -523,6 +531,39 @@ bool arm64_user_range(process_t *process, uintptr_t address, size_t length, unsi
     }
 
     spinlock_release(&process->lock, interrupts_enabled);
+
+    return success;
+}
+
+/* Eager fork of a single-threaded owner. The caller is its only user thread;
+ * its process lock excludes mapping/copy operations during this snapshot.
+ * Child remains unpublished, and failure leaves all storage child-owned. */
+bool arm64_user_clone(process_t *source, process_t *destination) {
+    bool saved_interrupts = spinlock_acquire(&source->lock);
+    bool success = true;
+
+    for (user_page_t *page = source->address_space->pages; page; page = page->next) {
+        if (!arm64_user_map(destination, page->address, KERNEL_PAGE_SIZE, page->protection)) {
+            success = false;
+            break;
+        }
+
+        user_page_t *copy = find_page(destination, page->address);
+
+        if (page->physical) {
+            if (!page_slot(destination, copy->address, true) ||
+                !page_memory_allocate(1, &copy->physical)) {
+                success = false;
+                break;
+            }
+
+            memcpy(page_memory_pointer(copy->physical), page_memory_pointer(page->physical),
+                KERNEL_PAGE_SIZE);
+            publish_page(destination, copy);
+        }
+    }
+
+    spinlock_release(&source->lock, saved_interrupts);
 
     return success;
 }

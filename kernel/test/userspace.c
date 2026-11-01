@@ -3,7 +3,7 @@
 #include <kernel/heap.h>
 #include <kernel/strings.h>
 #include <kernel/panic.h>
-#include <kernel/linux_abi.h>
+#include <kernel/syscall_abi.h>
 #include <platform/serial.h>
 
 extern const unsigned char arm64_init_image[], arm64_init_image_end[];
@@ -16,20 +16,23 @@ static void validate_terminal_buffers(void) {
     int descriptor;
     KERNEL_ASSERT(vfs_open(&kernel_process, "/dev/tty", O_RDWR, 0, &descriptor) == EOK);
 
-    unsigned char storage[LINUX_TERMIOS_SIZE + GUARD_BYTES];
+    unsigned char storage[ABI_TERMIOS_SIZE + GUARD_BYTES];
     memset(storage, SENTINEL, sizeof(storage));
-    KERNEL_ASSERT(vfs_ioctl(&kernel_process, descriptor, LINUX_TCGETS, (uintptr_t)storage) == EOK);
+    KERNEL_ASSERT(vfs_ioctl(&kernel_process, descriptor, ABI_TCGETS, (uintptr_t)storage) == EOK);
 
-    for (size_t byte_index = 0; byte_index < sizeof(storage); ++byte_index) {
-        KERNEL_ASSERT(storage[byte_index] == (byte_index < LINUX_TERMIOS_SIZE ? 0 : SENTINEL));
+    unsigned char original[ABI_TERMIOS_SIZE];
+    memcpy(original, storage, sizeof(original));
+
+    for (size_t index = ABI_TERMIOS_SIZE; index < sizeof(storage); ++index) {
+        KERNEL_ASSERT(storage[index] == SENTINEL);
     }
 
-    memset(storage, SENTINEL, sizeof(storage));
-    KERNEL_ASSERT(vfs_ioctl(&kernel_process, descriptor, LINUX_TCSETSW, (uintptr_t)storage) == EOK);
-    KERNEL_ASSERT(vfs_ioctl(&kernel_process, descriptor, LINUX_TCSETSF, (uintptr_t)storage) == EOK);
+    KERNEL_ASSERT(vfs_ioctl(&kernel_process, descriptor, ABI_TCSETSW, (uintptr_t)storage) == EOK);
+    KERNEL_ASSERT(vfs_ioctl(&kernel_process, descriptor, ABI_TCSETSF, (uintptr_t)storage) == EOK);
 
     for (size_t byte_index = 0; byte_index < sizeof(storage); ++byte_index) {
-        KERNEL_ASSERT(storage[byte_index] == SENTINEL);
+        KERNEL_ASSERT(storage[byte_index] ==
+                      (byte_index < ABI_TERMIOS_SIZE ? original[byte_index] : SENTINEL));
     }
 
     int descriptor_flags;
@@ -203,11 +206,20 @@ void arm64_userspace_boot(frame_allocator_t *allocator) {
     validate_elf_rejections(image_size);
     run_init_wave(image_size);
 
-    unsigned long free_after_warmup = allocator->free_frames;
+    /* Concurrency can expand permanently retained slab caches in either wave.
+     * Check live objects per class as well as non-cache frame ownership, so
+     * cache growth is allowed without hiding descriptor/metadata/page leaks. */
+    heap_snapshot_t warm, after;
+    heap_snapshot(&warm);
+    unsigned long frames_after_warmup = allocator->free_frames + warm.retained_pages;
     run_init_wave(image_size);
-    KERNEL_ASSERT(allocator->free_frames == free_after_warmup);
+    heap_snapshot(&after);
+    KERNEL_ASSERT(allocator->free_frames + after.retained_pages == frames_after_warmup);
+    KERNEL_ASSERT(!memcmp(warm.live_objects, after.live_objects, sizeof(warm.live_objects)));
     validate_adoption_and_fault(image_size);
-    KERNEL_ASSERT(allocator->free_frames == free_after_warmup);
+    heap_snapshot(&after);
+    KERNEL_ASSERT(allocator->free_frames + after.retained_pages == frames_after_warmup);
+    KERNEL_ASSERT(!memcmp(warm.live_objects, after.live_objects, sizeof(warm.live_objects)));
     platform_serial_write(
         "ARM64 process wait passed\nARM64 init reclamation passed\nARM64 musl init passed\n");
 }

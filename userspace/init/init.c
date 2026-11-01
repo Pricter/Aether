@@ -1,10 +1,14 @@
-/* Normal userspace init. Regression programs are built only by make test. */
+/* Start an unmodified static BusyBox shell through the Exec ABI. */
 #include <stdio.h>
+#include <unistd.h>
 
-/* Terminal input/process launching will extend this into a persistent init.
- * Until then, announce readiness once and return to the kernel's idle loop. */
+extern char **environ;
+
 int main(void) {
     puts("Aether init: ARM64 userspace ready.");
-
-    return 0;
+    fflush(stdout);
+    char *arguments[] = {"/bin/sh", NULL};
+    execve("/bin/sh", arguments, environ);
+    perror("execve /bin/sh");
+    return 1;
 }

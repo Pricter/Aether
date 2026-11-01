@@ -27,7 +27,7 @@ typedef struct {
 } elf_program_t;
 _Static_assert(sizeof(elf_header_t) == 64 && sizeof(elf_program_t) == 56, "ELF64 layouts");
 
-/* Linux ELF auxiliary-vector tags, each followed by its corresponding value. */
+/* ELF auxiliary-vector tags, each followed by its corresponding value. */
 typedef enum {
     AT_NULL = 0,
     AT_PHDR = 3,
@@ -52,33 +52,10 @@ typedef struct {
     uint64_t value;
 } elf_auxiliary_entry_t;
 
-enum {
-    INITIAL_EXECUTABLE,
-    INITIAL_ARGUMENT,
-    INITIAL_ARCH_ENVIRONMENT,
-    INITIAL_PATH_ENVIRONMENT,
-    INITIAL_STRING_COUNT,
-};
-#define INITIAL_ARGUMENT_COUNT 2
-#define INITIAL_ENVIRONMENT_COUNT 2
 #define INITIAL_AUXILIARY_COUNT 16
-#define INITIAL_STRINGS_OFFSET (KERNEL_PAGE_SIZE / 2)
-#define INITIAL_NONCE_OFFSET (3 * KERNEL_PAGE_SIZE / 4)
+#define INITIAL_STRINGS_OFFSET 1280
+#define INITIAL_NONCE_OFFSET (KERNEL_PAGE_SIZE - 16)
 #define BOOTSTRAP_NONCE_MIX 0x9e3779b97f4a7c15UL
-
-/* At SP, libc expects argc, terminated argv, terminated envp, then auxiliary
- * (type,value) pairs. All fields are 64-bit words, without intervening padding. */
-typedef struct {
-    uint64_t argument_count;
-    uintptr_t arguments[INITIAL_ARGUMENT_COUNT + 1];
-    uintptr_t environment[INITIAL_ENVIRONMENT_COUNT + 1];
-    elf_auxiliary_entry_t auxiliary[INITIAL_AUXILIARY_COUNT];
-} elf_initial_stack_t;
-_Static_assert(sizeof(elf_auxiliary_entry_t) == 16, "ELF auxiliary pair size");
-_Static_assert(__builtin_offsetof(elf_initial_stack_t, auxiliary) == 7 * sizeof(uint64_t),
-    "ELF initial stack has no padding before auxv");
-_Static_assert(sizeof(elf_initial_stack_t) <= INITIAL_STRINGS_OFFSET,
-    "ELF startup vectors must not overlap their strings");
 
 /* Check an image slice without forming an overflowing end address. */
 static bool image_slice(size_t length, uint64_t offset, uint64_t count) {
@@ -96,13 +73,15 @@ static elf_program_t program_at(
 
 /* A static executable must have readable, file-backed program headers for libc
  * TLS discovery and an entry inside executable bytes, never writable data. */
-process_t *arm64_elf_load(const void *image_pointer, size_t length, const char *argument,
-    process_t *parent, thread_t **thread_out) {
+process_t *arm64_elf_load_vectors(const void *image_pointer, size_t length, const char *path,
+    const char *const *arguments, const char *const *environment, process_t *parent,
+    thread_t **thread_out, errno_t *error_out) {
     *thread_out = NULL;
+    *error_out = -ENOEXEC;
     const unsigned char *image = image_pointer;
     elf_header_t header;
 
-    if (!image || length < sizeof(header) || !argument || strlen(argument) > ELF_ARGUMENT_MAXIMUM) {
+    if (!image || length < sizeof(header) || !path || !arguments || !environment) {
         return NULL;
     }
 
@@ -167,7 +146,7 @@ process_t *arm64_elf_load(const void *image_pointer, size_t length, const char *
         }
 
         if ((program.flags & PF_X) && header.entry >= program.address &&
-            header.entry - program.address < program.memory_size) {
+            header.entry - program.address < program.file_size) {
             entry_valid = true;
         }
 
@@ -224,6 +203,7 @@ process_t *arm64_elf_load(const void *image_pointer, size_t length, const char *
         return NULL;
     }
 
+    *error_out = -ENOMEM;
     process_t *process = process_create("/sbin/init");
 
     if (!process) {
@@ -265,21 +245,48 @@ process_t *arm64_elf_load(const void *image_pointer, size_t length, const char *
     unsigned char stack_page[KERNEL_PAGE_SIZE] = {0};
     uintptr_t stack_base = USTACK_TOP - sizeof(stack_page);
     size_t string_offset = INITIAL_STRINGS_OFFSET;
-    const char *strings[INITIAL_STRING_COUNT] = {
-        [INITIAL_EXECUTABLE] = "/sbin/init",
-        [INITIAL_ARGUMENT] = argument,
-        [INITIAL_ARCH_ENVIRONMENT] = "AETHER_ARCH=aarch64",
-        [INITIAL_PATH_ENVIRONMENT] = "PATH=/bin:/sbin",
-    };
+    uint64_t vectors[INITIAL_STRINGS_OFFSET / sizeof(uint64_t)] = {0};
+    size_t vector_count = 1, argument_count = 0;
+    const char *const *lists[] = {arguments, environment};
+    uintptr_t executable_address = 0;
 
-    uintptr_t string_addresses[INITIAL_STRING_COUNT];
+    for (unsigned int list = 0; list < 2; ++list) {
+        for (size_t index = 0; lists[list][index]; ++index) {
+            if (index >= EXEC_VECTOR_MAXIMUM || vector_count + 2 + INITIAL_AUXILIARY_COUNT * 2 >=
+                                                    INITIAL_STRINGS_OFFSET / sizeof(uint64_t)) {
+                *error_out = -E2BIG;
+                goto failed;
+            }
 
-    for (unsigned int string_index = 0; string_index < INITIAL_STRING_COUNT; ++string_index) {
-        size_t string_length = strlen(strings[string_index]) + 1;
-        string_addresses[string_index] = stack_base + string_offset;
-        memcpy(stack_page + string_offset, strings[string_index], string_length);
-        string_offset += string_length;
+            size_t bytes = strlen(lists[list][index]) + 1;
+
+            if (bytes > INITIAL_NONCE_OFFSET - string_offset) {
+                *error_out = -E2BIG;
+                goto failed;
+            }
+
+            vectors[vector_count++] = stack_base + string_offset;
+            memcpy(stack_page + string_offset, lists[list][index], bytes);
+            string_offset += bytes;
+
+            if (!list) {
+                ++argument_count;
+            }
+        }
+
+        vectors[vector_count++] = 0;
     }
+
+    size_t path_bytes = strlen(path) + 1;
+
+    if (path_bytes > INITIAL_NONCE_OFFSET - string_offset) {
+        *error_out = -E2BIG;
+        goto failed;
+    }
+
+    executable_address = stack_base + string_offset;
+    memcpy(stack_page + string_offset, path, path_bytes);
+    vectors[0] = argument_count;
 
     /* Supply 16 bootstrap bytes for libc startup. The counter/PID and mix below
      * diversify this placeholder; they do not provide cryptographic entropy. */
@@ -290,42 +297,27 @@ process_t *arm64_elf_load(const void *image_pointer, size_t length, const char *
     nonce ^= BOOTSTRAP_NONCE_MIX;
     memcpy(stack_page + INITIAL_NONCE_OFFSET + sizeof(nonce), &nonce, sizeof(nonce));
 
-    elf_initial_stack_t initial_stack = {
-        .argument_count = INITIAL_ARGUMENT_COUNT,
-        .arguments =
-            {
-                string_addresses[INITIAL_EXECUTABLE],
-                string_addresses[INITIAL_ARGUMENT],
-                0, /* argv terminator */
-            },
-        .environment =
-            {
-                string_addresses[INITIAL_ARCH_ENVIRONMENT],
-                string_addresses[INITIAL_PATH_ENVIRONMENT],
-                0, /* envp terminator */
-            },
-        .auxiliary =
-            {
-                {AT_PHDR, program_headers},
-                {AT_PHENT, sizeof(elf_program_t)},
-                {AT_PHNUM, header.program_count},
-                {AT_PAGESZ, KERNEL_PAGE_SIZE},
-                {AT_BASE, 0}, /* Static executable: no dynamic interpreter. */
-                {AT_ENTRY, header.entry},
-                {AT_UID, 0},
-                {AT_EUID, 0},
-                {AT_GID, 0},
-                {AT_EGID, 0},
-                {AT_HWCAP, 0}, /* No optional CPU capabilities advertised yet. */
-                {AT_CLKTCK, 100},
-                {AT_SECURE, 0},
-                {AT_RANDOM, stack_base + INITIAL_NONCE_OFFSET},
-                {AT_EXECFN, string_addresses[INITIAL_EXECUTABLE]},
-                {AT_NULL, 0},
-            },
+    const elf_auxiliary_entry_t auxiliary[] = {
+        {AT_PHDR, program_headers},
+        {AT_PHENT, sizeof(elf_program_t)},
+        {AT_PHNUM, header.program_count},
+        {AT_PAGESZ, KERNEL_PAGE_SIZE},
+        {AT_BASE, 0},
+        {AT_ENTRY, header.entry},
+        {AT_UID, 0},
+        {AT_EUID, 0},
+        {AT_GID, 0},
+        {AT_EGID, 0},
+        {AT_HWCAP, 0},
+        {AT_CLKTCK, 100},
+        {AT_SECURE, 0},
+        {AT_RANDOM, stack_base + INITIAL_NONCE_OFFSET},
+        {AT_EXECFN, executable_address},
+        {AT_NULL, 0},
     };
 
-    memcpy(stack_page, &initial_stack, sizeof(initial_stack));
+    memcpy(stack_page, vectors, vector_count * sizeof(uint64_t));
+    memcpy(stack_page + vector_count * sizeof(uint64_t), auxiliary, sizeof(auxiliary));
 
     if (!arm64_user_copy(process, stack_base, stack_page, sizeof(stack_page), true, true)) {
         goto failed;
@@ -370,9 +362,85 @@ process_t *arm64_elf_load(const void *image_pointer, size_t length, const char *
         goto failed;
     }
 
+    *error_out = EOK;
+
     return process;
 failed:
     process_destroy(process);
 
     return NULL;
+}
+
+/* Preserve the boot/test convenience interface while the loader accepts general vectors. */
+process_t *arm64_elf_load(const void *image, size_t length, const char *argument, process_t *parent,
+    thread_t **thread_out) {
+    if (!argument || strlen(argument) > ELF_ARGUMENT_MAXIMUM) {
+        *thread_out = NULL;
+
+        return NULL;
+    }
+
+    const char *arguments[] = {"/sbin/init", argument, NULL};
+    const char *environment[] = {"AETHER_ARCH=aarch64", "PATH=/bin:/sbin", NULL};
+    errno_t error;
+
+    return arm64_elf_load_vectors(
+        image, length, "/sbin/init", arguments, environment, parent, thread_out, &error);
+}
+
+/* Read a bounded executable through normal VFS ownership and checked metadata.
+ * The owned file reference never consumes a user descriptor slot. */
+errno_t arm64_elf_load_path(process_t *owner, const char *path, const char *const *arguments,
+    const char *const *environment, process_t **process_out, thread_t **thread_out) {
+    *process_out = NULL;
+    *thread_out = NULL;
+    file_t *file;
+    errno_t status = vfs_open_readonly(owner, path, &file);
+
+    if (status < 0) {
+        return status;
+    }
+
+    vfs_stat_t metadata;
+    status = file->inode->ops->stat ? file->inode->ops->stat(file->inode, &metadata) : -ENOSYS;
+
+    if (status == EOK && (!S_ISREG(metadata.mode) || !(metadata.mode & 0111))) {
+        status = -EACCES;
+    }
+
+    if (status == EOK && (!metadata.size || metadata.size > 8 * 1024 * 1024)) {
+        status = -ENOEXEC;
+    }
+
+    void *image = status == EOK ? malloc(metadata.size) : NULL;
+
+    if (status == EOK && !image) {
+        status = -ENOMEM;
+    }
+
+    size_t completed = 0;
+
+    while (status == EOK && completed < metadata.size) {
+        size_t bytes = 0;
+        status = file->ops && file->ops->read
+                     ? file->ops->read(file, (unsigned char *)image + completed,
+                           metadata.size - completed, &bytes)
+                     : -ENOSYS;
+        if (status == EOK && !bytes) {
+            status = -ENOEXEC;
+        }
+
+        completed += bytes;
+    }
+
+    file_unref(file);
+
+    if (status == EOK) {
+        *process_out = arm64_elf_load_vectors(
+            image, metadata.size, path, arguments, environment, owner, thread_out, &status);
+    }
+
+    free(image);
+
+    return status;
 }

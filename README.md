@@ -7,7 +7,8 @@ assets and build/test backends have been removed; their history remains in Git.
 The current target is QEMU `virt` with Cortex-A72 CPUs and GICv2. It boots one static
 musl-based init through the Linux AArch64 ABI, with private address spaces, shared
 VFS/tmpfs/devfs/pipes, TLS/SIMD preservation, and parent/child status collection.
-This is initial userspace, not a shell or a complete Linux implementation.
+Normal boot starts an unmodified, statically linked Linux BusyBox ash shell.
+This is a bounded Linux ABI compatibility milestone, not a complete Linux implementation.
 
 The design rules below apply to all new work. The authoritative implementation
 contracts are in [Kernel architecture](docs/kernel_architecture.md); boot/MMU/SMP
@@ -192,15 +193,16 @@ stacks/descriptors and completes processes only after their last thread is gone.
 
 Loaded processes currently have one user thread. The kernel can create a child
 with inherited open descriptions; wait consumes a completed child's status and
-address space. User `fork`, `clone`, `execve`, signals and pthreads are not yet
-implemented. Automatic load balancing and CPU hotplug are also future work.
+address space. User fork-style `clone` eagerly copies private memory; `execve` transactionally
+replaces a static ELF image while preserving PID and non-CLOEXEC descriptors.
+Signals and pthreads are not yet implemented. Automatic load balancing and CPU hotplug are also future work.
 
 ## 8. Observability and Testing
 
 Normal boot initializes the system and launches one init, without running tests.
 `make test` builds separate images in `build/tests/` to validate scheduling,
 memory permissions, remote TLB revocation and real musl programs. Two test-only
-parent/child waves run on every CPU, checking stable frame counts after warmup. Separate negative images cover fatal kernel paths.
+parent/child waves run on every CPU, checking stable live-object and non-cache frame ownership after warmup. Separate negative images cover fatal kernel paths.
 Native parser, allocator and memory-operation tests complement the VM checks. Fatal diagnostics retain
 allocation-free, lock-free serial output with atomic SMP ownership.
 
@@ -218,17 +220,17 @@ See [ABI and limitations](docs/kernel_architecture.md#linux-aarch64-abi).
 
 ## 10. Next Milestones
 
-- User-driven process creation and image replacement: fork/clone/execve.
 - Signals, cancellation, futexes and pthread lifecycle.
 - Higher-half kernel mapping, larger user address spaces and ASIDs.
-- Storage/persistence, terminal input, and an interactive shell.
+- Storage/persistence, broader BusyBox applets and shell job control.
 - A selected physical ARM board's boot, interrupt and device drivers.
 
 ## 11. Building and Running
 
-Requirements: Clang with AArch64 support, LLVM LLD, QEMU AArch64, Python 3, and Zig
+Requirements: Clang with AArch64 support, LLVM LLD/archiver/strip, QEMU AArch64, Python 3.9+, and Zig
 with bundled musl for cross-building userspace. Zig caches stay under `build/`.
-Set `CC`, `LD`, `QEMU`, or `ZIG` to override tools. `CC` defaults to Clang targeting
+The first normal build downloads a checksum-pinned BusyBox source archive;
+subsequent builds use the local cache. Set `CC`, `LD`, `QEMU`, or `ZIG` to override tools. `CC` defaults to Clang targeting
 `aarch64-none-elf`; the linker must support AArch64 ELF.
 
 ```sh
@@ -243,8 +245,12 @@ make clean                   # remove normal/test ARM outputs, retain compiler c
 ```
 
 Normal outputs are `build/kernel/Image`, `kernel.elf`, and `init.elf`. A normal
-boot prints `Aether init: ARM64 userspace ready.` once, then `Init exited. System
-idle.` Tests never overwrite these outputs: they have their own kernel and musl
+boot prints `Aether init: ARM64 userspace ready.` and opens an `aether> ` BusyBox
+ash prompt. Try `/bin/ls /bin`, `/bin/echo hello`, or
+`/bin/echo hello | /bin/cat`. Redirection and working-directory changes work.
+Enter submits a line; Backspace edits it; `exit` returns to idle. The kernel
+provides canonical terminal input and echo; signals/job control are not available.
+Tests never overwrite these outputs: they have their own kernel and musl
 regression image under `build/tests/`. The interactive console uses a
 132-column × 40-line QEMU window with zoom-to-fit.
 
@@ -282,3 +288,23 @@ is not on your PATH. Use descriptive variable names, named ABI/hardware constant
 and comments explaining function contracts and non-obvious ownership or ordering.
 See [source formatting and constants](docs/kernel_architecture.md#source-formatting-and-constants)
 for the precise scope and subsystem boundaries.
+
+## BusyBox compatibility target
+
+The build uses upstream BusyBox 1.36.1 with no source patches and a small configuration:
+ash (without job control), echo, cat, ls, pwd, true/false, mkdir, rm, wc, env and test.
+`util/build-busybox.py` pins and verifies the archive, builds it for Linux AArch64
+with musl, and keeps its original source and COPYING license under `build/vendor/`.
+BusyBox is GPL-2.0; its source archive is available from
+[the upstream release](https://busybox.net/downloads/busybox-1.36.1.tar.bz2).
+When distributing a built image, provide the corresponding BusyBox sources and build
+configuration/scripts under the applicable license terms. The Aether kernel does
+not require BusyBox-specific syscalls or binary patches.
+
+Programs are seeded into the tmpfs boot filesystem as ordinary executable files;
+this is not persistent storage or an external initramfs parser. The loader supports
+static ELF64 ET_EXEC, up to 32 arguments and 32 environment entries, with 2400 bytes
+of combined argument/environment strings and a one-page initial stack frame.
+Dynamic interpreters, static PIE, shebang execution, signals, futexes, shared-VM
+clone and user threads remain unsupported. `make check-arm64-normal` tests actual
+BusyBox command execution on one and four CPUs.

@@ -33,3 +33,7 @@ uint64_t *arm64_user_root(const struct user_address_space *space);
 
 /* Checked copy preflight may allocate demand pages under the process lock. */
 bool arm64_user_range(process_t *process, uintptr_t address, size_t length, unsigned int access);
+
+/* Eagerly copy all reservations/resident frames into an unpublished child.
+ * Source has exactly one user thread; failure leaves child safe to destroy. */
+bool arm64_user_clone(process_t *source, process_t *destination);

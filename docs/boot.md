@@ -37,8 +37,9 @@ header selects QEMU's arm64 boot protocol so the DTB arrives in x0. Direct ELF
 boot does not satisfy this target's DTB contract. Ctrl+C stops an interactive
 run. Checks bound emulator runtime and terminate/reap every test VM.
 
-Normal startup prints `Aether init: ARM64 userspace ready.` once and returns to
-idle. Explicit checks use separate outputs in `build/tests/`. Their
+Normal startup prints `Aether init: ARM64 userspace ready.` and opens an
+`aether> ` BusyBox ash prompt. Enter submits, Backspace edits, and `exit` returns
+to idle. Empty-input reads block through scheduler wait queues. Explicit checks use separate outputs in `build/tests/`. Their
 success output includes `ARM64 scheduler passed`; multicore checks also require
 `ARM64 SMP passed`, exact online CPU count, and timer/IPI statistics per CPU.
 The coordinator then exits and is reaped, leaving per-CPU idle threads and one
@@ -159,6 +160,26 @@ reporting never waits for peers to cooperate. The separate panic test bounds its
 peer-acknowledgement wait and confirms a secondary can become the sole fatal owner.
 A valid stack, CPU-local pointer, and polling UART remain prerequisites.
 
+## Serial terminal input
+
+After scheduler and GIC initialization, devfs enables PL011 receive and receive-timeout
+interrupts on SPI 33, routed to CPU 0. The allocation-free handler drains hardware
+into a locked 256-byte FIFO, then invokes the terminal's permanent wake callback
+outside the driver lock. Full buffers drop new bytes while continuing to drain
+hardware; bytes flagged with UART receive errors are discarded.
+
+TTY defaults to canonical input with echo, CR-to-NL conversion, erase/kill and EOF.
+Raw reads support VMIN=1/VTIME=0. Empty reads block through scheduler wait queues;
+nonblocking reads return EAGAIN and zero-length reads return immediately. Settings
+are shared across descriptors; TCSETSF flushes queued input. OPOST/ONLCR control
+output newline translation. The early and fatal output paths remain polling-based.
+Signals, signal keys, timed terminal reads and job control remain unsupported.
+
+The tmpfs boot filesystem receives `/sbin/init` and a checksum-pinned upstream static
+Linux BusyBox binary under `/bin` applet paths. Normal init execs `/bin/sh` through
+the Linux ABI. The normal-boot checks test shell editing, external commands,
+redirection, pipelines, exit status and repeated fork/exec/wait on one/four CPUs.
+
 ## SMP scheduler and off-CPU handoff
 
 The thread/process/wait interfaces, intrusive lists, heap and stack backend are
@@ -277,7 +298,7 @@ QEMU checks cover:
 - Static musl startup with argc/argv/envp/auxv, real TLS, initialized/BSS data,
   SIMD preservation, allocation, filesystem/vector/positioned I/O, stat and time.
 - Parent/child wait status, WNOHANG, one-shot reaping, orphan adoption and fatal
-  managed-process faults; two complete waves require equal free-frame counts.
+  managed-process faults; two complete waves require equal live-object counts and equal frame ownership after excluding retained slab cache pages.
 - Malformed ELF metadata/TLS and invalid/cross-page syscall pointers.
 - Remote read/write translation revocation while the target EL0 CPU masks IRQs
   and never yields; switch counters prove no incidental local flush occurred.
@@ -295,5 +316,10 @@ References: [QEMU virt](https://www.qemu.org/docs/master/system/arm/virt),
 [AAPCS64](https://github.com/ARM-software/abi-aa/blob/main/aapcs64/aapcs64.rst),
 [GICv2](https://documentation-service.arm.com/static/5f8ff21df86e16515cdbfafe).
 
-Next: user-driven fork/clone/execve, signals/futexes, and storage/input support. Scheduler lock sharding, load balancing, and CPU hotplug remain
+Next: signals/futexes, dynamic loading, persistent storage and broader Linux compatibility. Scheduler lock sharding, load balancing, and CPU hotplug remain
 independent future improvements.
+
+The compiler target is recorded in `userspace-target.txt`. Build tools read this
+shared value for musl userspace and BusyBox; it is the external toolchain spelling
+for the documented Linux AArch64 compatibility target. Kernel identifiers use
+architecture-neutral syscall/ABI names.

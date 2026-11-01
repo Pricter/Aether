@@ -24,3 +24,14 @@ void arm64_userspace_boot(frame_allocator_t *allocator);
 
 /* Mount the shared root/devices once during boot, without validation workloads. */
 bool arm64_filesystems_initialize(void);
+
+#define EXEC_VECTOR_MAXIMUM 32U
+#define EXEC_STRING_BYTES 2400U
+process_t *arm64_elf_load_vectors(const void *image, size_t length, const char *path,
+    const char *const *arguments, const char *const *environment, process_t *parent,
+    thread_t **thread_out, errno_t *error_out);
+/* Path loading owns and releases temporary file/image storage on every failure. */
+errno_t arm64_elf_load_path(process_t *owner, const char *path, const char *const *arguments,
+    const char *const *environment, process_t **process_out, thread_t **thread_out);
+long arm64_process_clone(arm64_exception_frame_t *frame);
+long arm64_process_exec(arm64_exception_frame_t *frame);

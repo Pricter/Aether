@@ -211,7 +211,7 @@ def main():
         # musl parent/child waves per CPU, and three adoption/fault workers.
         completed_users = re.search(r"^SCHEDULER_REAPED (0x[0-9a-f]+)", diagnostics, re.MULTILINE)
         kernel_workers = 41 if cpu_count == 1 else 45 + 10 * cpu_count
-        if not completed_users or int(completed_users.group(1), 16) != kernel_workers + 6 * cpu_count + 10:
+        if not completed_users or int(completed_users.group(1), 16) != kernel_workers + 8 * cpu_count + 10:
             raise SystemExit("Not every user thread completed off-CPU reclamation")
         if check_mode == "handoff":
             expected_messages += ("ARM64 forced handoff passed",)

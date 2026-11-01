@@ -13,6 +13,7 @@ typedef struct {
     unsigned long vector_index;
     unsigned long user_stack;
 } arm64_exception_frame_t;
+_Static_assert(sizeof(arm64_exception_frame_t) == 304, "ARM exception frame layout");
 
 /* Dispatch an IRQ and return to assembly, or enter the fatal reporter. */
 void arm64_exception_dispatch(arm64_exception_frame_t *exception_frame);

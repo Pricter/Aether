@@ -3,6 +3,7 @@
 #include <kernel/strings.h>
 #include <kernel/panic.h>
 #include <kernel/heap.h>
+#include <kernel/syscall_abi.h>
 
 static spinlock_t process_tree_lock = SPINLOCK_ZERO;
 
@@ -124,10 +125,17 @@ pid_t arm64_process_wait(process_t *parent, pid_t identifier, int *status, int o
     }
 }
 
-/* User-created threads/clone are not supported yet, so a loaded process owns
- * exactly one thread. Both Linux exit and exit_group complete that process. */
+/* Shared-VM user threads are not supported, so a loaded process owns
+ * exactly one thread. Both exit and exit_group complete that process. */
 __attribute__((noreturn)) void arm64_process_exit(int status, bool fault) {
-    process_t *process = this_cpu()->current_thread->parent;
+    thread_t *current = this_cpu()->current_thread;
+    process_t *process = current->parent;
+
+    if (current->clear_child_tid) {
+        int zero = 0;
+        arm64_user_copy(process, current->clear_child_tid, &zero, sizeof(zero), true, false);
+    }
+
     bool interrupts_enabled = spinlock_acquire(&process->lock);
     process->wait_status = fault ? status & 127 : (status & 255) << 8;
     process->user_status = status;
@@ -202,4 +210,235 @@ void process_destroy(process_t *process) {
     }
 
     free(process);
+}
+
+extern void arm64_resume_user(arm64_exception_frame_t *frame) __attribute__((noreturn));
+extern void arm64_capture_simd(context_regs_t *context);
+
+static void fork_thread_start(void) {
+    thread_t *thread = this_cpu()->current_thread;
+    arm64_resume_user(
+        (arm64_exception_frame_t *)(thread->kstack_top - sizeof(arm64_exception_frame_t)));
+}
+
+/* Only fork-style clone is supported: no shared VM, alternate child stack, or
+ * user threads. Reject all unsupported flags before allocating or publishing. */
+long arm64_process_clone(arm64_exception_frame_t *frame) {
+    unsigned long flags = frame->general_registers[0];
+    const unsigned long child_settid = 0x01000000UL, child_cleartid = 0x00200000UL;
+
+    if ((flags & 255) != 17 || (flags & ~(255UL | child_settid | child_cleartid)) ||
+        frame->general_registers[1]) {
+        return -EINVAL;
+    }
+
+    process_t *parent = this_cpu()->current_thread->parent;
+    process_t *child = process_create(parent->name);
+
+    if (!child) {
+        return -ENOMEM;
+    }
+
+    if (!arm64_user_clone(parent, child)) {
+        process_destroy(child);
+
+        return -ENOMEM;
+    }
+
+    bool parent_interrupts = spinlock_acquire(&parent->lock);
+    child->brk = parent->brk;
+    child->minimum_break = parent->minimum_break;
+    child->mmap_base = parent->mmap_base;
+    memcpy(child->cwd_path, parent->cwd_path, sizeof(child->cwd_path));
+    child->umask = parent->umask;
+    child->cwd = parent->cwd;
+
+    if (child->cwd) {
+        inode_ref(child->cwd);
+    }
+
+    for (unsigned int index = 0; index < FD_TABLE_SIZE; ++index) {
+        child->fd_table.files[index] = parent->fd_table.files[index];
+        child->fd_table.cloexec[index] = parent->fd_table.cloexec[index];
+
+        if (child->fd_table.files[index]) {
+            file_ref(child->fd_table.files[index]);
+        }
+    }
+
+    spinlock_release(&parent->lock, parent_interrupts);
+    thread_t *thread = thread_create(child, fork_thread_start);
+
+    if (!thread) {
+        process_destroy(child);
+
+        return -ENOMEM;
+    }
+
+    thread->tid = child->pid;
+    thread->user_entry = frame->return_address;
+    thread->ustack_top = frame->user_stack;
+    __asm__ volatile("mrs %0, tpidr_el0" : "=r"(thread->user_tls));
+    arm64_capture_simd(&thread->context);
+    arm64_exception_frame_t *copy = (arm64_exception_frame_t *)(thread->kstack_top - sizeof(*copy));
+    memcpy(copy, frame, sizeof(*copy));
+    copy->general_registers[0] = 0;
+    copy->interrupted_stack = thread->kstack_top;
+
+    /* Reserve the copied exception frame above the fresh trampoline's stack. */
+    thread->context.stack_pointer = (uintptr_t)copy;
+    uintptr_t child_tid = frame->general_registers[4];
+
+    if ((flags & child_settid) &&
+        !arm64_user_copy(child, child_tid, &child->pid, sizeof(child->pid), true, false)) {
+        thread_destroy(thread);
+        process_destroy(child);
+
+        return -EFAULT;
+    }
+
+    thread->clear_child_tid = flags & child_cleartid ? child_tid : 0;
+    pid_t identifier = child->pid;
+    arm64_process_attach(child, parent);
+    thread_ready(thread);
+
+    return identifier;
+}
+
+/* Copy argv/envp into bounded kernel-owned storage before replacing mappings. */
+struct exec_vectors {
+    char path[PATH_MAX];
+    const char *arguments[EXEC_VECTOR_MAXIMUM + 1];
+    const char *environment[EXEC_VECTOR_MAXIMUM + 1];
+    char strings[EXEC_STRING_BYTES];
+    size_t used;
+};
+
+static errno_t exec_string(process_t *process, uintptr_t address, char *buffer, size_t capacity) {
+    for (size_t index = 0; index < capacity; ++index) {
+        if (address >= ARM64_USER_LIMIT || index >= ARM64_USER_LIMIT - address ||
+            !arm64_user_copy(process, address + index, &buffer[index], 1, false, false)) {
+            return -EFAULT;
+        }
+
+        if (!buffer[index]) {
+            return EOK;
+        }
+    }
+
+    return -E2BIG;
+}
+
+static errno_t exec_vector(
+    process_t *process, uintptr_t address, const char **output, struct exec_vectors *vectors) {
+    if (!address) {
+        output[0] = NULL;
+
+        return EOK;
+    }
+
+    for (size_t index = 0; index <= EXEC_VECTOR_MAXIMUM; ++index) {
+        uintptr_t value;
+
+        if (address >= ARM64_USER_LIMIT || index * sizeof(value) >= ARM64_USER_LIMIT - address ||
+            !arm64_user_copy(
+                process, address + index * sizeof(value), &value, sizeof(value), false, false)) {
+            return -EFAULT;
+        }
+
+        if (!value) {
+            output[index] = NULL;
+
+            return EOK;
+        }
+
+        if (index == EXEC_VECTOR_MAXIMUM) {
+            return -E2BIG;
+        }
+
+        char *string = vectors->strings + vectors->used;
+        errno_t status =
+            exec_string(process, value, string, sizeof(vectors->strings) - vectors->used);
+        if (status < 0) {
+            return status;
+        }
+
+        output[index] = string;
+        vectors->used += strlen(string) + 1;
+    }
+
+    return -E2BIG;
+}
+
+long arm64_process_exec(arm64_exception_frame_t *frame) {
+    thread_t *current = this_cpu()->current_thread;
+    process_t *process = current->parent;
+    struct exec_vectors *vectors = malloc(sizeof(*vectors));
+
+    if (!vectors) {
+        return -ENOMEM;
+    }
+
+    errno_t status =
+        exec_string(process, frame->general_registers[0], vectors->path, sizeof(vectors->path));
+    if (status == -E2BIG) {
+        status = -ENAMETOOLONG;
+    }
+
+    if (status == EOK) {
+        status = exec_vector(process, frame->general_registers[1], vectors->arguments, vectors);
+    }
+
+    if (status == EOK) {
+        status = exec_vector(process, frame->general_registers[2], vectors->environment, vectors);
+    }
+
+    process_t *replacement = NULL;
+    thread_t *prepared = NULL;
+
+    if (status == EOK) {
+        if (!vectors->arguments[0]) {
+            vectors->arguments[0] = "";
+        }
+
+        status = arm64_elf_load_path(process, vectors->path, vectors->arguments,
+            vectors->environment, &replacement, &prepared);
+    }
+
+    free(vectors);
+
+    if (status < 0) {
+        return status;
+    }
+
+    uintptr_t entry = prepared->user_entry, stack = prepared->ustack_top;
+    thread_destroy(prepared);
+
+    /* No other thread can observe this single-threaded process mid-commit.
+     * IRQ masking prevents switching with a half-updated root. */
+    bool saved_interrupts = irq_save();
+    struct user_address_space *old_space = process->address_space;
+    process->address_space = replacement->address_space;
+    process->page_table_root = replacement->page_table_root;
+    replacement->address_space = old_space;
+    replacement->page_table_root = arm64_user_root(old_space);
+    process->brk = replacement->brk;
+    process->minimum_break = replacement->minimum_break;
+    process->mmap_base = replacement->mmap_base;
+    current->user_entry = entry;
+    current->ustack_top = stack;
+    current->clear_child_tid = 0;
+    arm64_process_switch(current, current);
+    current->user_tls = 0;
+    __asm__ volatile("msr tpidr_el0, xzr");
+    irq_restore(saved_interrupts);
+    process_destroy(replacement);
+
+    for (unsigned int index = 0; index < FD_TABLE_SIZE; ++index) {
+        if (process->fd_table.cloexec[index]) {
+            vfs_close(process, index);
+        }
+    }
+
+    arm64_user_thread_start();
 }

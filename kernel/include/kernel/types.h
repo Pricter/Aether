@@ -47,6 +47,9 @@ typedef int errno_t;
 #define EBADF 9         /* bad file descriptor                                */
 #define ESRCH 3         /* no such process                                    */
 #define EINTR 4         /* interrupted system call                            */
+#define E2BIG 7         /* argument list too long                              */
+#define ENOEXEC 8       /* invalid executable format                          */
+#define EACCES 13       /* permission denied                                  */
 #define EFAULT 14       /* bad address                                        */
 #define EBUSY 16        /* device or resource busy                            */
 #define EINVAL 22       /* invalid argument                                   */

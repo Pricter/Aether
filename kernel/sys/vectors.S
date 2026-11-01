@@ -65,6 +65,8 @@ arm64_exception_entry:
     bl arm64_exception_dispatch
     /* Restore architectural return state before scratch registers. ERET restores
      * the interrupted DAIF mask as well as PC; no IRQ can preempt this teardown. */
+    .global arm64_restore_exception
+arm64_restore_exception:
     ldr x0, [sp, #296]
     msr sp_el0, x0
     ldp x0, x1, [sp, #256]

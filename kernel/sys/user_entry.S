@@ -79,6 +79,42 @@ arm64_enter_user:
     eret
 .size arm64_enter_user, . - arm64_enter_user
 
+
+.global arm64_resume_user
+.type arm64_resume_user, %function
+arm64_resume_user:
+    msr daifset, #15
+    mov sp, x0
+    b arm64_restore_exception
+.size arm64_resume_user, . - arm64_resume_user
+
+.global arm64_capture_simd
+.type arm64_capture_simd, %function
+arm64_capture_simd:
+    add x9, x0, #112
+    stp q0, q1, [x9, #0]
+    stp q2, q3, [x9, #32]
+    stp q4, q5, [x9, #64]
+    stp q6, q7, [x9, #96]
+    stp q8, q9, [x9, #128]
+    stp q10, q11, [x9, #160]
+    stp q12, q13, [x9, #192]
+    stp q14, q15, [x9, #224]
+    stp q16, q17, [x9, #256]
+    stp q18, q19, [x9, #288]
+    stp q20, q21, [x9, #320]
+    stp q22, q23, [x9, #352]
+    stp q24, q25, [x9, #384]
+    stp q26, q27, [x9, #416]
+    stp q28, q29, [x9, #448]
+    stp q30, q31, [x9, #480]
+    mrs x9, fpcr
+    mrs x10, fpsr
+    str x9, [x0, #624]
+    str x10, [x0, #632]
+    ret
+.size arm64_capture_simd, . - arm64_capture_simd
+
 #ifdef KERNEL_SELF_TESTS
 /* Position-independent test image, copied into a private RX user page. All
  * absolute addresses below name the test's user VMAs, never kernel symbols. */
