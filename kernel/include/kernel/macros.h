@@ -1,6 +1,6 @@
 #pragma once
 
-#include <kernel/mmu.h>
+#include <kernel/heap.h>
 
 #define __section(section) __attribute__((__section__(section)))
 
@@ -8,4 +8,4 @@
 #define __initvar __section(".init.data")
 #define __initconst __section(".init.rodata")
 
-#define malloc_t(type) (type*)malloc(sizeof(type))
+#define malloc_t(type) (type *)malloc(sizeof(type))

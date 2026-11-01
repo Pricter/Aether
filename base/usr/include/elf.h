@@ -483,3 +483,13 @@ typedef struct {
 #ifdef __cplusplus
 }
 #endif
+/* ELF64 identification, AArch64 machine and program-segment ABI constants. */
+#define EM_AARCH64 183
+#define PT_LOAD 1
+#define PT_DYNAMIC 2
+#define PT_INTERP 3
+#define PT_TLS 7
+#define PT_GNU_STACK 0x6474e551
+#define PF_X 1
+#define PF_W 2
+#define PF_R 4

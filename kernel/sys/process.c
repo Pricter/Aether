@@ -1,459 +1,205 @@
-/*
- * process.c - process lifecycle and user address-space management.
- *
- * process_create / process_destroy handle process_t allocation and the
- * pagemap lifetime.
- *
- * process_mmap records VMAs without allocating physical pages; pages are
- * committed on first access via page_fault_handle / process_ensure_page
- * (demand paging).
- *
- * process_munmap handles exact, head-trim, tail-trim, and middle-split
- * cases so that arbitrary sub-region unmapping is correct.
- *
- * process_mprotect splits VMAs at the range boundaries, updates prot flags,
- * and re-maps already-present pages with new PTE flags.
- *
- * page_fault_handle dispatches vector-14 exceptions:
- *   - kernel faults    -> panic
- *   - user prot faults -> thread_exit (SIGSEGV analog)
- *   - user not-present -> process_ensure_page (demand paging)
- */
-
-#include <stdint.h>
-#include <stddef.h>
-#include <kernel/scheduler.h>
-#include <kernel/vfs.h>
-#include <kernel/mmu.h>
-#include <kernel/panic.h>
+#include <kernel/userspace.h>
 #include <kernel/cpu.h>
+#include <kernel/strings.h>
+#include <kernel/panic.h>
+#include <kernel/heap.h>
 
-/* ------------------------------------------------------------------ */
-/* Internal helpers                                                     */
-/* ------------------------------------------------------------------ */
+static spinlock_t process_tree_lock = SPINLOCK_ZERO;
 
-#define PAGE_ALIGN_UP(x) (((uintptr_t)(x) + PAGE_SIZE - 1) & ~(uintptr_t)(PAGE_SIZE - 1))
-
-/*
- * Convert PROT_* flags to x86-64 PTE flags.
- * PROT_NONE produces a present-but-read-only mapping; the caller must
- * not call this for PROT_NONE -- process_ensure_page returns 0 instead.
- */
-static uint64_t prot_to_pte(uint32_t prot) {
-    uint64_t flags = PTE_PRESENT | PTE_USER;
-    if (prot & PROT_WRITE) flags |= PTE_WRITABLE;
-    if (!(prot & PROT_EXEC)) flags |= PTE_NX;
-    return flags;
+/* Publication happens only after ELF/stack/descriptor preparation succeeds.
+ * Parent lifetime is protected by adoption at completion under this same lock. */
+void arm64_process_attach(process_t *process, process_t *parent) {
+    bool interrupts_enabled = spinlock_acquire(&process_tree_lock);
+    KERNEL_ASSERT(!process->managed_process);
+    process->managed_process = true;
+    process->parent_process = parent;
+    list_push_back(&parent->children, &process->child_node);
+    spinlock_release(&process_tree_lock, interrupts_enabled);
 }
 
-/*
- * vma_insert_sorted - insert vma into proc->vma_list in ascending base order.
- * Caller must hold proc->lock.
- */
-static void vma_insert_sorted(process_t *proc, vma_t *vma) {
-    list_node_t *n;
-    list_for_each(n, &proc->vma_list) {
-        vma_t *cur = list_entry(n, vma_t, node);
-        if (vma->base < cur->base) {
-            _list_insert(n->prev, n, &vma->node);
-            return;
-        }
+/* Called by the reaper after freeing the final thread stack and publishing its
+ * accounting. Completion is later than physical TTBR/stack handoff on every CPU. */
+void arm64_process_thread_reaped(process_t *process) {
+    if (!process->managed_process) {
+        return;
     }
-    list_push_back(&proc->vma_list, &vma->node);
+
+    bool interrupts_enabled = spinlock_acquire(&process->lock);
+    bool complete = !process->thread_count;
+    spinlock_release(&process->lock, interrupts_enabled);
+
+    if (!complete) {
+        return;
+    }
+
+    fd_table_destroy(&process->fd_table);
+
+    if (process->cwd) {
+        inode_unref(process->cwd);
+        process->cwd = NULL;
+    }
+
+    interrupts_enabled = spinlock_acquire(&process_tree_lock);
+
+    /* An exiting parent cannot retain dangling child->parent pointers. */
+    while (!list_empty(&process->children)) {
+        process_t *child = list_entry(list_pop_front(&process->children), process_t, child_node);
+        child->parent_process = &kernel_process;
+        list_push_back(&kernel_process.children, &child->child_node);
+        __atomic_fetch_add(&kernel_process.child_sequence, 1, __ATOMIC_RELEASE);
+    }
+
+    process->process_completed = true;
+
+    process_t *parent = process->parent_process;
+    __atomic_fetch_add(&parent->child_sequence, 1, __ATOMIC_RELEASE);
+
+    /* Waking does not take a process lock; scheduler code never takes the tree
+     * lock while holding its own state lock. No lock survives a context switch. */
+    wait_queue_wake_all(&parent->child_wait);
+    wait_queue_wake_all(&kernel_process.child_wait);
+    spinlock_release(&process_tree_lock, interrupts_enabled);
 }
 
-/* ------------------------------------------------------------------ */
-/* Process lifecycle                                                    */
-/* ------------------------------------------------------------------ */
+/* The predicate is allocation-free and takes no lock under scheduler locking. */
+struct child_condition {
+    process_t *parent;
+    unsigned long sequence;
+};
 
+static bool child_changed(void *context) {
+    struct child_condition *condition = context;
+
+    return __atomic_load_n(&condition->parent->child_sequence, __ATOMIC_ACQUIRE) !=
+           condition->sequence;
+}
+
+/* Consume a zombie only after off-CPU completion. WNOHANG does not consume a
+ * running child. Negative process groups other than -1 are not implemented. */
+pid_t arm64_process_wait(process_t *parent, pid_t identifier, int *status, int options) {
+    if ((options & ~1) || identifier == 0 || identifier < -1) {
+        return -EINVAL;
+    }
+
+    for (;;) {
+        bool interrupts_enabled = spinlock_acquire(&process_tree_lock);
+        bool has_child = false;
+        list_node_t *node;
+        list_for_each(node, &parent->children) {
+            process_t *child = list_entry(node, process_t, child_node);
+
+            if (identifier != -1 && child->pid != identifier) {
+                continue;
+            }
+
+            has_child = true;
+
+            if (!child->process_completed) {
+                continue;
+            }
+
+            list_remove(&child->child_node);
+
+            pid_t result = child->pid;
+            *status = child->wait_status;
+            spinlock_release(&process_tree_lock, interrupts_enabled);
+            process_destroy(child);
+
+            return result;
+        }
+
+        struct child_condition condition = {
+            parent, __atomic_load_n(&parent->child_sequence, __ATOMIC_RELAXED)};
+        spinlock_release(&process_tree_lock, interrupts_enabled);
+
+        if (!has_child) {
+            return -ECHILD;
+        }
+
+        if (options & 1) {
+            return 0;
+        }
+
+        thread_wait_until(&parent->child_wait, child_changed, &condition);
+    }
+}
+
+/* User-created threads/clone are not supported yet, so a loaded process owns
+ * exactly one thread. Both Linux exit and exit_group complete that process. */
+__attribute__((noreturn)) void arm64_process_exit(int status, bool fault) {
+    process_t *process = this_cpu()->current_thread->parent;
+    bool interrupts_enabled = spinlock_acquire(&process->lock);
+    process->wait_status = fault ? status & 127 : (status & 255) << 8;
+    process->user_status = status;
+
+    if (!fault) {
+        __atomic_fetch_add(&process->user_exits, 1, __ATOMIC_RELEASE);
+    }
+
+    spinlock_release(&process->lock, interrupts_enabled);
+    thread_exit();
+}
+
+/* Adoption can race getppid on another CPU. Snapshot the identifier while the
+ * tree lock still prevents the previous parent from being detached and freed. */
+pid_t arm64_process_parent_pid(process_t *process) {
+    bool interrupts_enabled = spinlock_acquire(&process_tree_lock);
+    pid_t identifier = process->parent_process ? process->parent_process->pid : 0;
+    spinlock_release(&process_tree_lock, interrupts_enabled);
+
+    return identifier;
+}
+
+/* Allocate an unpublished process and its owned address space. Name is borrowed
+ * and must outlive the process. Heap allocation zeroes all initial state. */
 process_t *process_create(const char *name) {
-    process_t *proc = malloc(sizeof(process_t));
-    if (!proc) return NULL;
+    process_t *process = malloc(sizeof(*process));
 
-    proc->pid          = scheduler_alloc_pid();
-    proc->name         = name;
-    proc->pagemap      = vmm_new_pagemap();
-    proc->lock         = (spinlock_t)SPINLOCK_ZERO;
-    list_head_init(&proc->threads);
-    proc->thread_count = 0;
-    list_head_init(&proc->vma_list);
-    proc->mmap_base    = MMAP_BASE;
-    proc->brk          = 0;
-    proc->cwd_path[0]  = '/';
-    proc->cwd_path[1]  = '\0';
-    proc->cwd          = NULL;
-    proc->umask        = 0022u;
-    fd_table_init(&proc->fd_table);
+    if (!process) {
+        return NULL;
+    }
 
-    return proc;
+    process->address_space = arm64_user_space_create();
+
+    if (!process->address_space) {
+        free(process);
+
+        return NULL;
+    }
+
+    process->page_table_root = arm64_user_root(process->address_space);
+    process->name = name;
+    process->pid = scheduler_alloc_pid();
+    process->mmap_base = MMAP_BASE;
+    list_head_init(&process->children);
+    list_node_init(&process->child_node);
+    wait_queue_init(&process->child_wait);
+    process->cwd_path[0] = '/';
+    process->umask = 0022;
+
+    return process;
 }
 
-void process_destroy(process_t *proc) {
-    KERNEL_ASSERT(proc != NULL);
-    KERNEL_ASSERT(proc->thread_count == 0);
-
-    list_node_t *n, *tmp;
-    list_for_each_safe(n, tmp, &proc->vma_list) {
-        vma_t *vma = list_entry(n, vma_t, node);
-        process_munmap(proc, vma->base, vma->length);
+/* Caller owns an unpublished or collected process. Scheduler handoff must
+ * finish on every CPU before its mappings and filesystem references are freed. */
+void process_destroy(process_t *process) {
+    if (!process) {
+        return;
     }
 
-    fd_table_destroy(&proc->fd_table);
-    if (proc->cwd) { inode_unref(proc->cwd); proc->cwd = NULL; }
-    /* page-table pages are not freed: vmm_free_pagemap is not yet implemented */
-    free(proc);
-}
+    KERNEL_ASSERT(!process->thread_count);
 
-/* ------------------------------------------------------------------ */
-/* Address space management                                             */
-/* ------------------------------------------------------------------ */
-
-/*
- * process_mmap - record a virtual address range as a VMA without allocating
- * physical pages. Pages are committed on first access (demand paging).
- *
- * hint: preferred base address (page-aligned), or 0 to use the watermark.
- * length: byte length (rounded up to PAGE_SIZE).
- * prot: PROT_* flags.
- *
- * Returns the virtual base address, or 0 on failure.
- */
-uintptr_t process_mmap(process_t *proc, uintptr_t hint, size_t length,
-                        uint32_t prot) {
-    length = PAGE_ALIGN_UP(length);
-    if (!length) return 0;
-
-    uintptr_t base;
-    if (hint) {
-        base = hint & ~(uintptr_t)(PAGE_SIZE - 1);
-    } else {
-        base             = proc->mmap_base;
-        proc->mmap_base += length;
+    for (unsigned int cpu_index = 0; cpu_index < coreCount; ++cpu_index) {
+        KERNEL_ASSERT(__atomic_load_n(
+                          &cpu_core_local[cpu_index].active_process, __ATOMIC_ACQUIRE) != process);
     }
 
-    vma_t *vma = malloc(sizeof(vma_t));
-    KERNEL_ASSERT(vma != NULL);
-    vma->base   = base;
-    vma->length = length;
-    vma->prot   = prot;
-    list_node_init(&vma->node);
+    arm64_user_space_destroy(process->address_space);
+    fd_table_destroy(&process->fd_table);
 
-    bool irq = spinlock_acquire(&proc->lock);
-    vma_insert_sorted(proc, vma);
-    spinlock_release(&proc->lock, irq);
-
-    return base;
-}
-
-/*
- * process_ensure_page - back the page covering vaddr with a physical frame.
- *
- * If the page is already present, returns its physical address immediately.
- * Otherwise finds the owning VMA, allocates a zeroed frame, maps it, and
- * returns the physical address.
- *
- * Returns 0 if vaddr is not covered by any VMA or the VMA has PROT_NONE.
- */
-uintptr_t process_ensure_page(process_t *proc, uintptr_t vaddr) {
-    uintptr_t page_base = vaddr & ~(uintptr_t)(PAGE_SIZE - 1);
-
-    bool irq = spinlock_acquire(&proc->lock);
-
-    /* fast path: page already backed */
-    uintptr_t phys = mmu_virt_to_phys(proc->pagemap, page_base);
-    if (phys) {
-        spinlock_release(&proc->lock, irq);
-        return phys;
+    if (process->cwd) {
+        inode_unref(process->cwd);
     }
 
-    /* find the owning VMA */
-    uint32_t prot = 0;
-    list_node_t *n;
-    list_for_each(n, &proc->vma_list) {
-        vma_t *vma = list_entry(n, vma_t, node);
-        if (page_base >= vma->base && page_base < vma->base + vma->length) {
-            prot = vma->prot;
-            break;
-        }
-    }
-
-    /* PROT_NONE or no covering VMA -- do not map */
-    if (!(prot & (PROT_READ | PROT_WRITE | PROT_EXEC))) {
-        spinlock_release(&proc->lock, irq);
-        return 0;
-    }
-
-    phys = mmu_request_frame();
-    __builtin_memset((void *)(phys + hhdm_offset), 0, PAGE_SIZE);
-    mmu_map_page(proc->pagemap, page_base, phys, prot_to_pte(prot));
-
-    spinlock_release(&proc->lock, irq);
-    return phys;
-}
-
-/*
- * process_munmap - remove the mapping for [addr, addr+length).
- *
- * Handles four overlap cases relative to an existing VMA:
- *   entire coverage  -> remove and free the VMA
- *   tail trim        -> shrink VMA length
- *   head trim        -> advance VMA base
- *   middle split     -> split into two VMAs, remove the hole
- *
- * For pages that were never demand-faulted (not present in the page table),
- * no physical frame is freed.
- */
-void process_munmap(process_t *proc, uintptr_t addr, size_t length) {
-    length = PAGE_ALIGN_UP(length);
-    if (!length) return;
-    uintptr_t end = addr + length;
-
-    bool irq = spinlock_acquire(&proc->lock);
-
-    list_node_t *n, *tmp;
-    list_for_each_safe(n, tmp, &proc->vma_list) {
-        vma_t    *vma     = list_entry(n, vma_t, node);
-        uintptr_t vma_end = vma->base + vma->length;
-
-        if (vma->base >= end || vma_end <= addr)
-            continue;
-
-        uintptr_t unmap_start = (vma->base >= addr) ? vma->base : addr;
-        uintptr_t unmap_end   = (vma_end  <= end)   ? vma_end   : end;
-
-        if (addr <= vma->base && end >= vma_end) {
-            /* entire VMA falls within the unmap range */
-            list_remove(n);
-            spinlock_release(&proc->lock, irq);
-            for (uintptr_t off = unmap_start; off < unmap_end; off += PAGE_SIZE) {
-                uintptr_t phys = mmu_virt_to_phys(proc->pagemap, off);
-                if (phys) {
-                    mmu_unmap_page(proc->pagemap, off);
-                    mmu_free_frames((void *)phys, 1);
-                }
-            }
-            free(vma);
-            irq = spinlock_acquire(&proc->lock);
-
-        } else if (vma->base < addr && end >= vma_end) {
-            /* tail trim: unmap [addr, vma_end) */
-            vma->length = addr - vma->base;
-            spinlock_release(&proc->lock, irq);
-            for (uintptr_t off = unmap_start; off < unmap_end; off += PAGE_SIZE) {
-                uintptr_t phys = mmu_virt_to_phys(proc->pagemap, off);
-                if (phys) {
-                    mmu_unmap_page(proc->pagemap, off);
-                    mmu_free_frames((void *)phys, 1);
-                }
-            }
-            irq = spinlock_acquire(&proc->lock);
-
-        } else if (addr <= vma->base && end < vma_end) {
-            /* head trim: unmap [vma->base, end) */
-            vma->base   = end;
-            vma->length = vma_end - end;
-            spinlock_release(&proc->lock, irq);
-            for (uintptr_t off = unmap_start; off < unmap_end; off += PAGE_SIZE) {
-                uintptr_t phys = mmu_virt_to_phys(proc->pagemap, off);
-                if (phys) {
-                    mmu_unmap_page(proc->pagemap, off);
-                    mmu_free_frames((void *)phys, 1);
-                }
-            }
-            irq = spinlock_acquire(&proc->lock);
-
-        } else {
-            /*
-             * middle split: [vma->base, addr) survives; [addr, end) is freed;
-             * [end, vma_end) becomes a new tail VMA.
-             */
-            uintptr_t  tail_base   = end;
-            uintptr_t  tail_length = vma_end - end;
-            uint32_t   tail_prot   = vma->prot;
-            list_node_t *anchor    = &vma->node;
-            vma->length = addr - vma->base;
-            spinlock_release(&proc->lock, irq);
-
-            for (uintptr_t off = addr; off < end; off += PAGE_SIZE) {
-                uintptr_t phys = mmu_virt_to_phys(proc->pagemap, off);
-                if (phys) {
-                    mmu_unmap_page(proc->pagemap, off);
-                    mmu_free_frames((void *)phys, 1);
-                }
-            }
-
-            vma_t *tail = malloc(sizeof(vma_t));
-            KERNEL_ASSERT(tail != NULL);
-            tail->base   = tail_base;
-            tail->length = tail_length;
-            tail->prot   = tail_prot;
-            list_node_init(&tail->node);
-
-            irq = spinlock_acquire(&proc->lock);
-            _list_insert(anchor, anchor->next, &tail->node);
-            /* only one VMA can contain the middle; stop iterating */
-            break;
-        }
-    }
-
-    spinlock_release(&proc->lock, irq);
-}
-
-uintptr_t process_alloc_ustack(process_t *proc) {
-    uintptr_t base = process_mmap(proc, USTACK_TOP - USTACK_SIZE, USTACK_SIZE,
-                                   PROT_READ | PROT_WRITE);
-    return base + USTACK_SIZE;
-}
-
-/* ------------------------------------------------------------------ */
-/* mprotect                                                             */
-/* ------------------------------------------------------------------ */
-
-/*
- * process_mprotect - update the protection flags for [addr, addr+length).
- *
- * Algorithm:
- *   Pass 1: split any VMA that straddles addr.
- *   Pass 2: split any VMA that straddles addr+length.
- *   Pass 3: for every VMA entirely within [addr, addr+length), update prot
- *           and remap all present pages (mmu_map_page + INVLPG per page).
- *
- * The lock is released around malloc calls (Pass 1/2) and around page-table
- * walks (Pass 3) to keep the critical section short.
- */
-errno_t process_mprotect(process_t *proc, uintptr_t addr, size_t length,
-                          uint32_t prot) {
-    if (addr & (PAGE_SIZE - 1)) return -EINVAL;
-    length = PAGE_ALIGN_UP(length);
-    if (!length) return EOK;
-    uintptr_t end = addr + length;
-
-    bool irq = spinlock_acquire(&proc->lock);
-
-    /* Pass 1: split at addr */
-    list_node_t *n;
-    list_for_each(n, &proc->vma_list) {
-        vma_t    *vma     = list_entry(n, vma_t, node);
-        uintptr_t vma_end = vma->base + vma->length;
-        if (vma->base < addr && vma_end > addr) {
-            uintptr_t  tail_base   = addr;
-            uintptr_t  tail_length = vma_end - addr;
-            uint32_t   tail_prot   = vma->prot;
-            list_node_t *anchor    = &vma->node;
-            vma->length = addr - vma->base;
-            spinlock_release(&proc->lock, irq);
-
-            vma_t *tail = malloc(sizeof(vma_t));
-            KERNEL_ASSERT(tail != NULL);
-            tail->base   = tail_base;
-            tail->length = tail_length;
-            tail->prot   = tail_prot;
-            list_node_init(&tail->node);
-
-            irq = spinlock_acquire(&proc->lock);
-            _list_insert(anchor, anchor->next, &tail->node);
-            break;
-        }
-    }
-
-    /* Pass 2: split at end */
-    list_for_each(n, &proc->vma_list) {
-        vma_t    *vma     = list_entry(n, vma_t, node);
-        uintptr_t vma_end = vma->base + vma->length;
-        if (vma->base < end && vma_end > end) {
-            uintptr_t  tail_base   = end;
-            uintptr_t  tail_length = vma_end - end;
-            uint32_t   tail_prot   = vma->prot;
-            list_node_t *anchor    = &vma->node;
-            vma->length = end - vma->base;
-            spinlock_release(&proc->lock, irq);
-
-            vma_t *tail = malloc(sizeof(vma_t));
-            KERNEL_ASSERT(tail != NULL);
-            tail->base   = tail_base;
-            tail->length = tail_length;
-            tail->prot   = tail_prot;
-            list_node_init(&tail->node);
-
-            irq = spinlock_acquire(&proc->lock);
-            _list_insert(anchor, anchor->next, &tail->node);
-            break;
-        }
-    }
-
-    /* Pass 3: update prot and remap all present pages within [addr, end) */
-    list_for_each(n, &proc->vma_list) {
-        vma_t *vma = list_entry(n, vma_t, node);
-        if (vma->base < addr || vma->base + vma->length > end) continue;
-
-        vma->prot = prot;
-        uintptr_t vbase = vma->base;
-        uintptr_t vlen  = vma->length;
-        uint64_t  flags = prot_to_pte(prot);
-        spinlock_release(&proc->lock, irq);
-
-        for (uintptr_t off = vbase; off < vbase + vlen; off += PAGE_SIZE) {
-            uintptr_t phys = mmu_virt_to_phys(proc->pagemap, off);
-            if (phys) {
-                mmu_map_page(proc->pagemap, off, phys, flags);
-                asm volatile("invlpg (%0)" :: "r"(off) : "memory");
-            }
-        }
-
-        irq = spinlock_acquire(&proc->lock);
-    }
-
-    spinlock_release(&proc->lock, irq);
-    return EOK;
-}
-
-/* ------------------------------------------------------------------ */
-/* Page fault handler (vector 14)                                       */
-/* ------------------------------------------------------------------ */
-
-/*
- * page_fault_handle - resolve or escalate a page fault.
- *
- * Page fault error code bits (Intel SDM Vol 3, Section 4.7):
- *   bit 0 (P):  0 = not-present; 1 = protection violation
- *   bit 1 (W):  0 = read; 1 = write
- *   bit 2 (U):  0 = supervisor; 1 = user mode
- *   bit 4 (I):  1 = instruction fetch
- *
- * Kernel faults (U=0) always panic -- no recovery path exists.
- * User protection faults (P=1, U=1) kill the thread; no signal yet.
- * User not-present faults (P=0, U=1) trigger demand paging; if the
- * faulting address is not covered by a VMA the thread is killed.
- */
-void page_fault_handle(struct regs *r) {
-    uintptr_t fault_addr = r->cr2;
-    int       user_mode  = (r->cs & 0x3) == 3;
-
-    if (!user_mode) {
-        PAGE_FAULT_PANIC(r);
-    }
-
-    if (r->err_code & 1) {
-        /* protection violation: write to read-only page, PROT_NONE access, etc. */
-        KWARN("vmm", "user prot fault addr=%#lx err=%#lx pid=%d",
-              fault_addr, r->err_code,
-              (int)this_cpu()->current_thread->parent->pid);
-        thread_exit();
-        __builtin_unreachable();
-    }
-
-    /* not-present: attempt demand paging */
-    process_t *proc = this_cpu()->current_thread->parent;
-    if (!proc) {
-        PAGE_FAULT_PANIC(r);
-    }
-
-    uintptr_t phys = process_ensure_page(proc, fault_addr);
-    if (!phys) {
-        KWARN("vmm", "user fault addr=%#lx outside VMA, pid=%d",
-              fault_addr, (int)proc->pid);
-        thread_exit();
-        __builtin_unreachable();
-    }
-    /* fault resolved; isr_common will IRETQ and re-execute the faulting insn */
+    free(process);
 }

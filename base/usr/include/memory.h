@@ -7,10 +7,11 @@
 extern "C" {
 #endif
 
-void *memcpy(void *dest, const void *src, size_t n);
-void *memset(void *s, int c, size_t n);
-void *memmove(void *dest, const void *src, size_t n);
-int memcmp(const void *s1, const void *s2, size_t n);
+/* Freestanding byte operations implemented by kernel/libc/memory.c. */
+void *memcpy(void *destination, const void *source, size_t length);
+void *memset(void *destination, int value, size_t length);
+void *memmove(void *destination, const void *source, size_t length);
+int memcmp(const void *left, const void *right, size_t length);
 
 #ifdef __cplusplus
 }

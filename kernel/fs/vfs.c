@@ -15,242 +15,334 @@
 
 #include <kernel/vfs.h>
 #include <kernel/scheduler.h>
-#include <kernel/mmu.h>
+#include <kernel/heap.h>
+#include <kernel/strings.h>
 #include <kernel/panic.h>
 #include <kernel/spinlock.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
 
-/* string functions provided by libc/string.c */
-extern size_t strlen(const char *s);
-extern int    strncmp(const char *s1, const char *s2, size_t n);
-extern int    strcmp(const char *s1, const char *s2);
-
-/* ------------------------------------------------------------------ */
-/* Mount table                                                          */
-/* ------------------------------------------------------------------ */
+/* Mount table */
 
 #define MAX_MOUNTS 16
-#define VFS_PATH_MAX 512
+#define VFS_PATH_MAX PATH_MAX
+#define VFS_MAX_COMPONENTS 128
 
 typedef struct {
-    char      path[VFS_PATH_MAX];
-    inode_t  *root;
-    bool      active;
+    char path[VFS_PATH_MAX];
+    inode_t *root;
+    bool active;
 } mount_entry_t;
 
 static mount_entry_t mount_table[MAX_MOUNTS];
-static spinlock_t    mount_lock = SPINLOCK_ZERO;
+static spinlock_t mount_lock = SPINLOCK_ZERO;
 
-/* ------------------------------------------------------------------ */
-/* Path helpers                                                        */
-/* ------------------------------------------------------------------ */
+/* Path helpers */
 
 /*
- * path_canon - canonicalize an absolute path by resolving "." and ".."
+ * canonicalize_path - canonicalize an absolute path by resolving "." and ".."
  * components via string manipulation (no filesystem access).
  *
- * `in` must start with '/'.  Output is written to `out` (may alias `in`
- * only if they are the same pointer -- we copy `in` to a local buffer
- * first).  Returns true on success, false if the result overflows outsz.
+ * `input_path` must start with '/'.  Output is written to `output_path` (may alias `input_path`
+ * only if they are the same pointer -- we copy `input_path` to a local buffer
+ * first).  Returns true on success, false if the result overflows output_capacity.
  */
-static bool path_canon(const char *in, char *out, size_t outsz) {
-    if (!in || in[0] != '/') return false;
-    size_t inlen = strlen(in);
-    if (inlen >= VFS_PATH_MAX) return false;
+static bool canonicalize_path(const char *input_path, char *output_path, size_t output_capacity) {
+    if (!input_path || input_path[0] != '/') {
+        return false;
+    }
 
-    char buf[VFS_PATH_MAX];
-    __builtin_memcpy(buf, in, inlen + 1);
+    size_t input_length = strlen(input_path);
 
-    const char *segs[128];
-    int         nseg = 0;
+    if (input_length >= VFS_PATH_MAX) {
+        return false;
+    }
 
-    char *p = buf + 1;   /* skip leading '/' */
-    while (*p) {
-        while (*p == '/') p++;
-        if (!*p) break;
+    char buffer[VFS_PATH_MAX];
+    __builtin_memcpy(buffer, input_path, input_length + 1);
 
-        char *seg = p;
-        while (*p && *p != '/') p++;
-        char *seg_end = p;
-        if (*p == '/') *p++ = '\0';
+    const char *components[VFS_MAX_COMPONENTS];
+    int component_count = 0;
 
-        size_t slen = (size_t)(seg_end - seg);
-        if (slen == 1 && seg[0] == '.') continue;
-        if (slen == 2 && seg[0] == '.' && seg[1] == '.') {
-            if (nseg > 0) nseg--;
+    char *path_cursor = buffer + 1; /* skip leading '/' */
+    while (*path_cursor) {
+        while (*path_cursor == '/') {
+            path_cursor++;
+        }
+
+        if (!*path_cursor) {
+            break;
+        }
+
+        char *component = path_cursor;
+
+        while (*path_cursor && *path_cursor != '/') {
+            path_cursor++;
+        }
+
+        char *component_end = path_cursor;
+
+        if (*path_cursor == '/') {
+            *path_cursor++ = '\0';
+        }
+
+        size_t component_length = (size_t)(component_end - component);
+
+        if (component_length == 1 && component[0] == '.') {
             continue;
         }
-        if (nseg >= 128) return false;
-        segs[nseg++] = seg;
+
+        if (component_length == 2 && component[0] == '.' && component[1] == '.') {
+            if (component_count > 0) {
+                component_count--;
+            }
+
+            continue;
+        }
+
+        if (component_count >= VFS_MAX_COMPONENTS) {
+            return false;
+        }
+
+        components[component_count++] = component;
     }
 
-    size_t pos = 0;
-    if (pos + 1 >= outsz) return false;
-    out[pos++] = '/';
-    for (int i = 0; i < nseg; i++) {
-        size_t slen = strlen(segs[i]);
-        if (i > 0) {
-            if (pos + 1 >= outsz) return false;
-            out[pos++] = '/';
-        }
-        if (pos + slen >= outsz) return false;
-        __builtin_memcpy(out + pos, segs[i], slen);
-        pos += slen;
+    size_t position = 0;
+
+    if (position + 1 >= output_capacity) {
+        return false;
     }
-    out[pos] = '\0';
+
+    output_path[position++] = '/';
+
+    for (int entry_index = 0; entry_index < component_count; entry_index++) {
+        size_t component_length = strlen(components[entry_index]);
+
+        if (entry_index > 0) {
+            if (position + 1 >= output_capacity) {
+                return false;
+            }
+
+            output_path[position++] = '/';
+        }
+
+        if (position + component_length >= output_capacity) {
+            return false;
+        }
+
+        __builtin_memcpy(output_path + position, components[entry_index], component_length);
+        position += component_length;
+    }
+
+    output_path[position] = '\0';
+
     return true;
 }
 
 /*
- * path_to_abs - construct an absolute path from a possibly-relative one.
+ * make_absolute_path - construct an absolute path from a possibly-relative one.
  *
  * If path starts with '/' it is just canonicalized.
- * Otherwise proc->cwd_path is prepended (a snapshot is taken under
- * proc->lock to avoid races with concurrent chdir).  proc may be NULL,
+ * Otherwise process->cwd_path is prepended (a snapshot is taken under
+ * process->lock to avoid races with concurrent chdir).  process may be NULL,
  * in which case "/" is assumed as the CWD.
  *
- * Returns true on success; false if the result would exceed outsz.
+ * Returns true on success; false if the result would exceed output_capacity.
  */
-static bool path_to_abs(process_t *proc, const char *path,
-                         char *out, size_t outsz) {
-    if (!path || !out || outsz < 2) return false;
-
-    if (path[0] == '/') return path_canon(path, out, outsz);
-
-    /* Relative path: snapshot cwd under lock */
-    char cwd[VFS_PATH_MAX];
-    if (proc) {
-        bool irq = spinlock_acquire(&proc->lock);
-        size_t cwdlen = strlen(proc->cwd_path);
-        if (cwdlen >= VFS_PATH_MAX) { spinlock_release(&proc->lock, irq); return false; }
-        __builtin_memcpy(cwd, proc->cwd_path, cwdlen + 1);
-        spinlock_release(&proc->lock, irq);
-    } else {
-        cwd[0] = '/'; cwd[1] = '\0';
+static bool make_absolute_path(
+    process_t *process, const char *path, char *output_path, size_t output_capacity) {
+    if (!path || !output_path || output_capacity < 2) {
+        return false;
     }
 
-    size_t cwdlen  = strlen(cwd);
-    bool   sep     = (cwd[cwdlen - 1] != '/');
-    size_t pathlen = strlen(path);
-    if (cwdlen + (sep ? 1u : 0u) + pathlen >= VFS_PATH_MAX) return false;
+    if (path[0] == '/') {
+        return canonicalize_path(path, output_path, output_capacity);
+    }
 
-    char raw[VFS_PATH_MAX];
-    __builtin_memcpy(raw, cwd, cwdlen);
-    size_t pos = cwdlen;
-    if (sep) raw[pos++] = '/';
-    __builtin_memcpy(raw + pos, path, pathlen + 1);
+    /* Relative path: snapshot cwd under lock */
+    char working_directory[VFS_PATH_MAX];
 
-    return path_canon(raw, out, outsz);
+    if (process) {
+        bool interrupts_enabled = spinlock_acquire(&process->lock);
+        size_t working_directory_length = strlen(process->cwd_path);
+
+        if (working_directory_length >= VFS_PATH_MAX) {
+            spinlock_release(&process->lock, interrupts_enabled);
+
+            return false;
+        }
+
+        __builtin_memcpy(working_directory, process->cwd_path, working_directory_length + 1);
+        spinlock_release(&process->lock, interrupts_enabled);
+    } else {
+        working_directory[0] = '/';
+        working_directory[1] = '\0';
+    }
+
+    size_t working_directory_length = strlen(working_directory);
+    bool needs_separator = (working_directory[working_directory_length - 1] != '/');
+    size_t path_length = strlen(path);
+
+    if (working_directory_length + (needs_separator ? 1u : 0u) + path_length >= VFS_PATH_MAX) {
+        return false;
+    }
+
+    char combined_path[VFS_PATH_MAX];
+    __builtin_memcpy(combined_path, working_directory, working_directory_length);
+
+    size_t position = working_directory_length;
+
+    if (needs_separator) {
+        combined_path[position++] = '/';
+    }
+
+    __builtin_memcpy(combined_path + position, path, path_length + 1);
+
+    return canonicalize_path(combined_path, output_path, output_capacity);
 }
 
-/* ------------------------------------------------------------------ */
-/* Reference counting                                                  */
-/* ------------------------------------------------------------------ */
+/* Reference counting */
 
+/* Retain an already-live inode; acquiring the initial reference is the caller's responsibility. */
 void inode_ref(inode_t *inode) {
     KERNEL_ASSERT(inode != NULL);
     __atomic_fetch_add(&inode->refcount, 1u, __ATOMIC_RELAXED);
 }
 
+/* Destroy filesystem-private state only when the final inode reference is released. */
 void inode_unref(inode_t *inode) {
-    if (!inode) return;
-    uint32_t old = __atomic_fetch_sub(&inode->refcount, 1u, __ATOMIC_ACQ_REL);
-    KERNEL_ASSERT(old > 0);
-    if (old == 1) {
-        if (inode->ops && inode->ops->destroy)
+    if (!inode) {
+        return;
+    }
+
+    uint32_t previous_reference_count = __atomic_fetch_sub(&inode->refcount, 1u, __ATOMIC_ACQ_REL);
+    KERNEL_ASSERT(previous_reference_count > 0);
+
+    if (previous_reference_count == 1) {
+        if (inode->ops && inode->ops->destroy) {
             inode->ops->destroy(inode);
+        }
+
         free(inode);
     }
 }
 
+/* Retain an open description, sharing its position and status flags between descriptors. */
 void file_ref(file_t *file) {
     KERNEL_ASSERT(file != NULL);
     __atomic_fetch_add(&file->refcount, 1u, __ATOMIC_RELAXED);
 }
 
+/* On final release, close the endpoint before dropping its owned inode reference. */
 void file_unref(file_t *file) {
-    if (!file) return;
-    uint32_t old = __atomic_fetch_sub(&file->refcount, 1u, __ATOMIC_ACQ_REL);
-    KERNEL_ASSERT(old > 0);
-    if (old == 1) {
-        if (file->ops && file->ops->close)
+    if (!file) {
+        return;
+    }
+
+    uint32_t previous_reference_count = __atomic_fetch_sub(&file->refcount, 1u, __ATOMIC_ACQ_REL);
+    KERNEL_ASSERT(previous_reference_count > 0);
+
+    if (previous_reference_count == 1) {
+        if (file->ops && file->ops->close) {
             file->ops->close(file);
+        }
+
         inode_unref(file->inode);
         free(file);
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* file_alloc helper for filesystem implementations                    */
-/* ------------------------------------------------------------------ */
+/* file_alloc helper for filesystem implementations */
 
-file_t *file_alloc(inode_t *inode, int flags, const file_ops_t *ops) {
-    file_t *f = malloc(sizeof(file_t));
-    if (!f) return NULL;
+/* Return one owned open description, taking its own reference to the supplied inode. */
+file_t *file_alloc(inode_t *inode, int flags, const file_ops_t *operations) {
+    file_t *file = malloc(sizeof(file_t));
+
+    if (!file) {
+        return NULL;
+    }
+
     inode_ref(inode);
-    f->inode    = inode;
-    f->flags    = flags;
-    f->pos      = 0;
-    f->refcount = 1;
-    f->ops      = ops;
-    f->lock     = (spinlock_t)SPINLOCK_ZERO;
-    f->private  = NULL;
-    return f;
+    file->inode = inode;
+    file->flags = flags;
+    file->pos = 0;
+    file->refcount = 1;
+    file->ops = operations;
+    file->lock = (spinlock_t)SPINLOCK_ZERO;
+    file->private = NULL;
+
+    return file;
 }
 
-/* ------------------------------------------------------------------ */
-/* fd_table helpers                                                    */
-/* ------------------------------------------------------------------ */
+/* fd_table helpers */
 
-void fd_table_init(fd_table_t *fdt) {
-    __builtin_memset(fdt, 0, sizeof(fd_table_t));
+/* Initialize an unpublished process descriptor table with every slot empty. */
+void fd_table_init(fd_table_t *descriptor_table) {
+    __builtin_memset(descriptor_table, 0, sizeof(fd_table_t));
 }
 
-void fd_table_destroy(fd_table_t *fdt) {
-    for (int i = 0; i < FD_TABLE_SIZE; i++) {
-        if (fdt->files[i]) {
-            file_unref(fdt->files[i]);
-            fdt->files[i] = NULL;
+/* Drop every slot reference after the caller has made the descriptor table unreachable. */
+void fd_table_destroy(fd_table_t *descriptor_table) {
+    for (int descriptor_index = 0; descriptor_index < FD_TABLE_SIZE; descriptor_index++) {
+        if (descriptor_table->files[descriptor_index]) {
+            file_unref(descriptor_table->files[descriptor_index]);
+            descriptor_table->files[descriptor_index] = NULL;
         }
     }
 }
 
-/* Find a free slot >= start; caller must hold proc->lock. */
-static int fd_alloc_from(process_t *proc, int start) {
-    for (int i = start; i < FD_TABLE_SIZE; i++) {
-        if (!proc->fd_table.files[i]) return i;
+/* Find a free slot >= start; caller must hold process->lock. */
+static int allocate_descriptor_from(process_t *process, int first_descriptor) {
+    for (int descriptor_index = first_descriptor; descriptor_index < FD_TABLE_SIZE;
+        descriptor_index++) {
+        if (!process->fd_table.files[descriptor_index]) {
+            return descriptor_index;
+        }
     }
+
     return -1;
 }
 
-/* Find the lowest free slot; caller must hold proc->lock. */
-static int fd_alloc(process_t *proc) {
-    return fd_alloc_from(proc, 0);
+/* Find the lowest free slot; caller must hold process->lock. */
+static int allocate_descriptor(process_t *process) {
+    return allocate_descriptor_from(process, 0);
 }
 
 /*
- * fd_get - look up fd in proc, increment the file's refcount, and return it.
- * Caller must NOT hold proc->lock.
- * Returns NULL with *err set to -EBADF if fd is invalid or closed.
+ * get_referenced_file - look up fd in process, increment the file's refcount, and return it.
+ * Caller must NOT hold process->lock.
+ * Returns NULL with *status set to -EBADF if fd is invalid or closed.
  */
-static file_t *fd_get(process_t *proc, int fd, errno_t *err) {
-    if (fd < 0 || fd >= FD_TABLE_SIZE) { *err = -EBADF; return NULL; }
-    bool irq = spinlock_acquire(&proc->lock);
-    file_t *f = proc->fd_table.files[fd];
-    if (f) file_ref(f);
-    spinlock_release(&proc->lock, irq);
-    if (!f) { *err = -EBADF; return NULL; }
-    return f;
+static file_t *get_referenced_file(process_t *process, int file_descriptor, errno_t *status) {
+    if (file_descriptor < 0 || file_descriptor >= FD_TABLE_SIZE) {
+        *status = -EBADF;
+
+        return NULL;
+    }
+
+    bool interrupts_enabled = spinlock_acquire(&process->lock);
+    file_t *file = process->fd_table.files[file_descriptor];
+
+    if (file) {
+        file_ref(file);
+    }
+
+    spinlock_release(&process->lock, interrupts_enabled);
+
+    if (!file) {
+        *status = -EBADF;
+
+        return NULL;
+    }
+
+    return file;
 }
 
-/* ------------------------------------------------------------------ */
-/* Path helpers                                                        */
-/* ------------------------------------------------------------------ */
+/* Path helpers */
 
 /*
- * path_split - split an absolute path into parent directory path and basename.
+ * split_parent_path - split an absolute path into parent directory path and basename.
  *
  * Examples:
  *   "/dev/null"  -> parent="/dev",  basename="null"
@@ -260,956 +352,1529 @@ static file_t *fd_get(process_t *proc, int fd, errno_t *err) {
  * parent_out must be at least VFS_PATH_MAX bytes.
  * Returns true on success, false if path is too long or malformed.
  */
-static bool path_split(const char *path, char *parent_out,
-                        const char **basename_out) {
-    size_t len = strlen(path);
-    if (len == 0 || path[0] != '/') return false;
+static bool split_parent_path(const char *path, char *parent_out, const char **basename_out) {
+    size_t length = strlen(path);
+
+    if (length == 0 || path[0] != '/') {
+        return false;
+    }
 
     /* find the last '/' */
-    const char *last_slash = path + len - 1;
-    while (last_slash > path && *last_slash != '/') last_slash--;
+    const char *last_slash = path + length - 1;
+
+    while (last_slash > path && *last_slash != '/') {
+        last_slash--;
+    }
 
     /* everything before the last '/' is the parent */
-    size_t plen;
+    size_t parent_length;
+
     if (last_slash == path) {
         /* parent is root "/" */
         parent_out[0] = '/';
         parent_out[1] = '\0';
-        plen = 1;
+        parent_length = 1;
     } else {
-        plen = (size_t)(last_slash - path);
-        if (plen >= VFS_PATH_MAX) return false;
-        __builtin_memcpy(parent_out, path, plen);
-        parent_out[plen] = '\0';
+        parent_length = (size_t)(last_slash - path);
+
+        if (parent_length >= VFS_PATH_MAX) {
+            return false;
+        }
+
+        __builtin_memcpy(parent_out, path, parent_length);
+        parent_out[parent_length] = '\0';
     }
-    (void)plen;
+
+    (void)parent_length;
 
     *basename_out = last_slash + 1;
+
     return true;
 }
 
-/* ------------------------------------------------------------------ */
-/* Path resolution                                                     */
-/* ------------------------------------------------------------------ */
+/* Path resolution */
 
 /*
- * vfs_resolve - resolve an absolute path to an inode.
+ * resolve_inode - resolve an absolute path to an inode.
  *
  * Returns the inode with one reference held, or NULL with *err_out set.
  * Walks the path component-by-component using inode_ops->lookup.
  */
-static inode_t *vfs_resolve(const char *path, errno_t *err_out) {
-    if (!path || path[0] != '/') { *err_out = -EINVAL; return NULL; }
+static inode_t *resolve_inode(const char *path, errno_t *err_out) {
+    if (!path || path[0] != '/') {
+        *err_out = -EINVAL;
+
+        return NULL;
+    }
 
     /* Find the longest-prefix mount point. */
-    inode_t *root     = NULL;
-    size_t   best_len = 0;
+    inode_t *root = NULL;
+    size_t best_len = 0;
 
-    bool irq = spinlock_acquire(&mount_lock);
-    for (int i = 0; i < MAX_MOUNTS; i++) {
-        if (!mount_table[i].active) continue;
-        const char *mp   = mount_table[i].path;
-        size_t      mlen = strlen(mp);
+    bool interrupts_enabled = spinlock_acquire(&mount_lock);
+
+    for (int mount_index = 0; mount_index < MAX_MOUNTS; mount_index++) {
+        if (!mount_table[mount_index].active) {
+            continue;
+        }
+
+        const char *mount_path = mount_table[mount_index].path;
+        size_t mount_path_length = strlen(mount_path);
 
         bool matches;
-        if (mlen == 1 && mp[0] == '/') {
+
+        if (mount_path_length == 1 && mount_path[0] == '/') {
             /* "/" matches any absolute path */
             matches = true;
         } else {
-            matches = (mlen <= strlen(path)) &&
-                      (strncmp(path, mp, mlen) == 0) &&
-                      (path[mlen] == '/' || path[mlen] == '\0');
+            matches = (mount_path_length <= strlen(path)) &&
+                      (strncmp(path, mount_path, mount_path_length) == 0) &&
+                      (path[mount_path_length] == '/' || path[mount_path_length] == '\0');
         }
 
-        if (matches && mlen > best_len) {
-            best_len = mlen;
-            root = mount_table[i].root;
+        if (matches && mount_path_length > best_len) {
+            best_len = mount_path_length;
+            root = mount_table[mount_index].root;
         }
     }
-    if (root) inode_ref(root);
-    spinlock_release(&mount_lock, irq);
 
-    if (!root) { *err_out = -ENOENT; return NULL; }
+    if (root) {
+        inode_ref(root);
+    }
+
+    spinlock_release(&mount_lock, interrupts_enabled);
+
+    if (!root) {
+        *err_out = -ENOENT;
+
+        return NULL;
+    }
 
     /* Walk the remaining path components. */
-    const char *p = path + best_len;
-    while (*p == '/') p++;   /* strip leading slashes after mount prefix */
+    const char *path_cursor = path + best_len;
 
-    inode_t *cur = root;
+    while (*path_cursor == '/') {
+        path_cursor++; /* strip leading slashes after mount prefix */
+    }
 
-    while (*p) {
-        const char *start = p;
-        while (*p && *p != '/') p++;
-        size_t clen = (size_t)(p - start);
-        while (*p == '/') p++;
+    inode_t *current_inode = root;
 
-        if (clen == 0) continue;
-        if (clen >= 256) {
-            inode_unref(cur);
+    while (*path_cursor) {
+        const char *start = path_cursor;
+
+        while (*path_cursor && *path_cursor != '/') {
+            path_cursor++;
+        }
+
+        size_t component_length = (size_t)(path_cursor - start);
+
+        while (*path_cursor == '/') {
+            path_cursor++;
+        }
+
+        if (component_length == 0) {
+            continue;
+        }
+
+        if (component_length >= 256) {
+            inode_unref(current_inode);
             *err_out = -ENAMETOOLONG;
+
             return NULL;
         }
 
         char name[256];
-        __builtin_memcpy(name, start, clen);
-        name[clen] = '\0';
+        __builtin_memcpy(name, start, component_length);
+        name[component_length] = '\0';
 
-        if (!S_ISDIR(cur->mode)) {
-            inode_unref(cur);
+        if (!S_ISDIR(current_inode->mode)) {
+            inode_unref(current_inode);
             *err_out = -ENOTDIR;
+
             return NULL;
         }
-        if (!cur->ops || !cur->ops->lookup) {
-            inode_unref(cur);
+
+        if (!current_inode->ops || !current_inode->ops->lookup) {
+            inode_unref(current_inode);
             *err_out = -ENOSYS;
+
             return NULL;
         }
 
         inode_t *next = NULL;
-        errno_t   e   = cur->ops->lookup(cur, name, &next);
-        inode_unref(cur);
-        if (e < 0) { *err_out = e; return NULL; }
-        cur = next;
+        errno_t status = current_inode->ops->lookup(current_inode, name, &next);
+        inode_unref(current_inode);
+
+        if (status < 0) {
+            *err_out = status;
+
+            return NULL;
+        }
+
+        current_inode = next;
     }
 
     *err_out = EOK;
-    return cur;
+
+    return current_inode;
 }
 
-/* ------------------------------------------------------------------ */
-/* VFS init and mount                                                  */
-/* ------------------------------------------------------------------ */
+/* VFS init and mount */
 
+/* Initialize the mount table once, before filesystem roots are published. */
 void vfs_init(void) {
     __builtin_memset(mount_table, 0, sizeof(mount_table));
     mount_lock = (spinlock_t)SPINLOCK_ZERO;
 }
 
+/* Publish a mounted root and retain its inode reference under the mount-table lock. */
 errno_t vfs_mount(const char *path, inode_t *root) {
-    if (!path || !root || path[0] != '/') return -EINVAL;
-    size_t plen = strlen(path);
-    if (plen >= VFS_PATH_MAX) return -ENAMETOOLONG;
+    if (!path || !root || path[0] != '/') {
+        return -EINVAL;
+    }
 
-    bool irq = spinlock_acquire(&mount_lock);
+    size_t mount_path_length = strlen(path);
+
+    if (mount_path_length >= VFS_PATH_MAX) {
+        return -ENAMETOOLONG;
+    }
+
+    bool interrupts_enabled = spinlock_acquire(&mount_lock);
 
     /* reject duplicate mount points */
-    for (int i = 0; i < MAX_MOUNTS; i++) {
-        if (mount_table[i].active && strcmp(mount_table[i].path, path) == 0) {
-            spinlock_release(&mount_lock, irq);
+    for (int mount_index = 0; mount_index < MAX_MOUNTS; mount_index++) {
+        if (mount_table[mount_index].active && strcmp(mount_table[mount_index].path, path) == 0) {
+            spinlock_release(&mount_lock, interrupts_enabled);
+
             return -EBUSY;
         }
     }
 
     /* find a free slot */
-    for (int i = 0; i < MAX_MOUNTS; i++) {
-        if (!mount_table[i].active) {
-            __builtin_memcpy(mount_table[i].path, path, plen + 1);
-            mount_table[i].root   = root;
-            mount_table[i].active = true;
+    for (int mount_index = 0; mount_index < MAX_MOUNTS; mount_index++) {
+        if (!mount_table[mount_index].active) {
+            __builtin_memcpy(mount_table[mount_index].path, path, mount_path_length + 1);
+            mount_table[mount_index].root = root;
+            mount_table[mount_index].active = true;
             inode_ref(root);
-            spinlock_release(&mount_lock, irq);
+            spinlock_release(&mount_lock, interrupts_enabled);
+
             return EOK;
         }
     }
 
-    spinlock_release(&mount_lock, irq);
+    spinlock_release(&mount_lock, interrupts_enabled);
+
     return -ENOMEM;
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_open                                                            */
-/* ------------------------------------------------------------------ */
+/* vfs_open */
 
-errno_t vfs_open(process_t *proc, const char *path, int flags, uint32_t mode,
-                 int *fd_out) {
-    if (!proc || !path || !fd_out) return -EINVAL;
+/* Snapshot creation permissions under their process synchronization owner. */
+static uint32_t creation_permissions(process_t *process, uint32_t mode) {
+    if (!process) {
+        return mode & 0777u;
+    }
 
-    char abspath[VFS_PATH_MAX];
-    if (!path_to_abs(proc, path, abspath, sizeof(abspath))) return -ENAMETOOLONG;
+    bool interrupts_enabled = spinlock_acquire(&process->lock);
+    uint32_t permissions = (mode & 0777u) & ~process->umask;
+    spinlock_release(&process->lock, interrupts_enabled);
 
-    errno_t  err   = 0;
-    inode_t *inode = vfs_resolve(abspath, &err);
+    return permissions;
+}
+
+/* Resolve or create the inode, open it, then transfer the file reference into a descriptor slot. */
+errno_t vfs_open(
+    process_t *process, const char *path, int flags, uint32_t mode, int *descriptor_out) {
+    if (!process || !path || !descriptor_out) {
+        return -EINVAL;
+    }
+
+    char absolute_path[VFS_PATH_MAX];
+
+    if (!make_absolute_path(process, path, absolute_path, sizeof(absolute_path))) {
+        return -ENAMETOOLONG;
+    }
+
+    errno_t status = 0;
+    inode_t *inode = resolve_inode(absolute_path, &status);
 
     if (!inode) {
-        if (err != -ENOENT || !(flags & O_CREAT)) return err;
+        if (status != -ENOENT || !(flags & O_CREAT)) {
+            return status;
+        }
 
         /* O_CREAT: resolve parent dir and create the file */
-        char        parent[VFS_PATH_MAX];
+        char parent[VFS_PATH_MAX];
         const char *basename = NULL;
-        if (!path_split(abspath, parent, &basename) || !basename || !*basename)
+
+        if (!split_parent_path(absolute_path, parent, &basename) || !basename || !*basename) {
             return -EINVAL;
+        }
 
-        errno_t  perr = 0;
-        inode_t *dir  = vfs_resolve(parent, &perr);
-        if (!dir) return perr;
+        errno_t parent_status = 0;
+        inode_t *directory = resolve_inode(parent, &parent_status);
 
-        if (!S_ISDIR(dir->mode) || !dir->ops || !dir->ops->create) {
-            inode_unref(dir);
+        if (!directory) {
+            return parent_status;
+        }
+
+        if (!S_ISDIR(directory->mode) || !directory->ops || !directory->ops->create) {
+            inode_unref(directory);
+
             return -ENOTDIR;
         }
 
-        uint32_t eff_mode = ((mode & 0777u) & ~proc->umask) | S_IFREG;
-        err = dir->ops->create(dir, basename, eff_mode, &inode);
-        inode_unref(dir);
-        if (err < 0) return err;
+        uint32_t effective_mode = creation_permissions(process, mode) | S_IFREG;
+        status = directory->ops->create(directory, basename, effective_mode, &inode);
+        inode_unref(directory);
+
+        if (status < 0) {
+            return status;
+        }
 
     } else if ((flags & O_CREAT) && (flags & O_EXCL)) {
         inode_unref(inode);
+
         return -EEXIST;
     }
 
     /* O_DIRECTORY: caller requires a directory */
     if ((flags & O_DIRECTORY) && !S_ISDIR(inode->mode)) {
         inode_unref(inode);
+
         return -ENOTDIR;
     }
 
     if (!inode->ops || !inode->ops->open) {
         inode_unref(inode);
+
         return -ENOSYS;
     }
 
     file_t *file = NULL;
-    err = inode->ops->open(inode, flags, &file);
-    inode_unref(inode);   /* open holds its own ref via file_alloc */
-    if (err < 0) return err;
+    status = inode->ops->open(inode, flags, &file);
+    inode_unref(inode); /* open holds its own ref via file_alloc */
+    if (status < 0) {
+        return status;
+    }
 
-    bool irq = spinlock_acquire(&proc->lock);
-    int fd = fd_alloc(proc);
-    if (fd < 0) {
-        spinlock_release(&proc->lock, irq);
+    bool interrupts_enabled = spinlock_acquire(&process->lock);
+    int file_descriptor = allocate_descriptor(process);
+
+    if (file_descriptor < 0) {
+        spinlock_release(&process->lock, interrupts_enabled);
         file_unref(file);
+
         return -EMFILE;
     }
-    proc->fd_table.files[fd]  = file;
-    proc->fd_table.cloexec[fd] = (flags & O_CLOEXEC) ? 1 : 0;
-    spinlock_release(&proc->lock, irq);
 
-    *fd_out = fd;
+    process->fd_table.files[file_descriptor] = file;
+    process->fd_table.cloexec[file_descriptor] = (flags & O_CLOEXEC) ? 1 : 0;
+    spinlock_release(&process->lock, interrupts_enabled);
+
+    *descriptor_out = file_descriptor;
+
     return EOK;
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_close                                                           */
-/* ------------------------------------------------------------------ */
+/* vfs_close */
 
-errno_t vfs_close(process_t *proc, int fd) {
-    if (!proc || fd < 0 || fd >= FD_TABLE_SIZE) return -EBADF;
+/* Detach the slot under the process lock; close callbacks run after releasing that lock. */
+errno_t vfs_close(process_t *process, int file_descriptor) {
+    if (!process || file_descriptor < 0 || file_descriptor >= FD_TABLE_SIZE) {
+        return -EBADF;
+    }
 
-    bool irq = spinlock_acquire(&proc->lock);
-    file_t *f = proc->fd_table.files[fd];
-    if (!f) { spinlock_release(&proc->lock, irq); return -EBADF; }
-    proc->fd_table.files[fd] = NULL;
-    spinlock_release(&proc->lock, irq);
+    bool interrupts_enabled = spinlock_acquire(&process->lock);
+    file_t *file = process->fd_table.files[file_descriptor];
 
-    file_unref(f);
+    if (!file) {
+        spinlock_release(&process->lock, interrupts_enabled);
+
+        return -EBADF;
+    }
+
+    process->fd_table.files[file_descriptor] = NULL;
+    process->fd_table.cloexec[file_descriptor] = 0;
+    spinlock_release(&process->lock, interrupts_enabled);
+
+    file_unref(file);
+
     return EOK;
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_read                                                            */
-/* ------------------------------------------------------------------ */
+/* vfs_read */
 
-errno_t vfs_read(process_t *proc, int fd, void *buf, size_t count,
-                 size_t *bytes_read) {
-    if (!proc || !buf || !bytes_read) return -EINVAL;
+/* Borrow a file reference across driver I/O after validating read access and file type. */
+errno_t vfs_read(
+    process_t *process, int file_descriptor, void *buffer, size_t count, size_t *bytes_read) {
+    if (!process || !buffer || !bytes_read) {
+        return -EINVAL;
+    }
     *bytes_read = 0;
 
-    errno_t  err = 0;
-    file_t  *f   = fd_get(proc, fd, &err);
-    if (!f) return err;
+    errno_t status = 0;
+    file_t *file = get_referenced_file(process, file_descriptor, &status);
 
-    int acc = f->flags & O_ACCMODE;
-    if (acc == O_WRONLY) { file_unref(f); return -EBADF; }
+    if (!file) {
+        return status;
+    }
 
-    if (S_ISDIR(f->inode->mode)) { file_unref(f); return -EISDIR; }
+    int access_mode = file_status_flags(file) & O_ACCMODE;
 
-    if (!f->ops || !f->ops->read) { file_unref(f); return -ENOSYS; }
+    if (access_mode == O_WRONLY) {
+        file_unref(file);
 
-    err = f->ops->read(f, buf, count, bytes_read);
-    file_unref(f);
-    return err;
-}
+        return -EBADF;
+    }
 
-/* ------------------------------------------------------------------ */
-/* vfs_write                                                           */
-/* ------------------------------------------------------------------ */
+    if (S_ISDIR(file->inode->mode)) {
+        file_unref(file);
 
-errno_t vfs_write(process_t *proc, int fd, const void *buf, size_t count,
-                  size_t *bytes_written) {
-    if (!proc || !buf || !bytes_written) return -EINVAL;
-    *bytes_written = 0;
+        return -EISDIR;
+    }
 
-    errno_t  err = 0;
-    file_t  *f   = fd_get(proc, fd, &err);
-    if (!f) return err;
+    if (!file->ops || !file->ops->read) {
+        file_unref(file);
 
-    int acc = f->flags & O_ACCMODE;
-    if (acc == O_RDONLY) { file_unref(f); return -EBADF; }
-
-    if (S_ISDIR(f->inode->mode)) { file_unref(f); return -EISDIR; }
-
-    if (!f->ops || !f->ops->write) { file_unref(f); return -ENOSYS; }
-
-    err = f->ops->write(f, buf, count, bytes_written);
-    file_unref(f);
-    return err;
-}
-
-/* ------------------------------------------------------------------ */
-/* vfs_fstat                                                           */
-/* ------------------------------------------------------------------ */
-
-errno_t vfs_fstat(process_t *proc, int fd, vfs_stat_t *out) {
-    if (!proc || !out) return -EINVAL;
-
-    errno_t err = 0;
-    file_t *f   = fd_get(proc, fd, &err);
-    if (!f) return err;
-
-    if (!f->inode->ops || !f->inode->ops->stat) {
-        file_unref(f);
         return -ENOSYS;
     }
 
-    err = f->inode->ops->stat(f->inode, out);
-    file_unref(f);
-    return err;
+    status = file->ops->read(file, buffer, count, bytes_read);
+    file_unref(file);
+
+    return status;
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_stat                                                            */
-/* ------------------------------------------------------------------ */
+/* vfs_write */
 
-errno_t vfs_stat(process_t *proc, const char *path, vfs_stat_t *out) {
-    if (!path || !out) return -EINVAL;
+/* Borrow a file reference across driver I/O after validating write access and file type. */
+errno_t vfs_write(process_t *process, int file_descriptor, const void *buffer, size_t count,
+    size_t *bytes_written) {
+    if (!process || !buffer || !bytes_written) {
+        return -EINVAL;
+    }
+    *bytes_written = 0;
 
-    char abspath[VFS_PATH_MAX];
-    if (!path_to_abs(proc, path, abspath, sizeof(abspath))) return -ENAMETOOLONG;
+    errno_t status = 0;
+    file_t *file = get_referenced_file(process, file_descriptor, &status);
 
-    errno_t  err   = 0;
-    inode_t *inode = vfs_resolve(abspath, &err);
-    if (!inode) return err;
+    if (!file) {
+        return status;
+    }
+
+    int access_mode = file_status_flags(file) & O_ACCMODE;
+
+    if (access_mode == O_RDONLY) {
+        file_unref(file);
+
+        return -EBADF;
+    }
+
+    if (S_ISDIR(file->inode->mode)) {
+        file_unref(file);
+
+        return -EISDIR;
+    }
+
+    if (!file->ops || !file->ops->write) {
+        file_unref(file);
+
+        return -ENOSYS;
+    }
+
+    status = file->ops->write(file, buffer, count, bytes_written);
+    file_unref(file);
+
+    return status;
+}
+
+/* vfs_fstat */
+
+/* Borrow the descriptor's inode while obtaining filesystem-specific metadata. */
+errno_t vfs_fstat(process_t *process, int file_descriptor, vfs_stat_t *stat_out) {
+    if (!process || !stat_out) {
+        return -EINVAL;
+    }
+
+    errno_t status = 0;
+    file_t *file = get_referenced_file(process, file_descriptor, &status);
+
+    if (!file) {
+        return status;
+    }
+
+    if (!file->inode->ops || !file->inode->ops->stat) {
+        file_unref(file);
+
+        return -ENOSYS;
+    }
+
+    status = file->inode->ops->stat(file->inode, stat_out);
+    file_unref(file);
+
+    return status;
+}
+
+/* vfs_stat */
+
+/* Resolve a path and release its temporary inode reference after collecting metadata. */
+errno_t vfs_stat(process_t *process, const char *path, vfs_stat_t *stat_out) {
+    if (!path || !stat_out) {
+        return -EINVAL;
+    }
+
+    char absolute_path[VFS_PATH_MAX];
+
+    if (!make_absolute_path(process, path, absolute_path, sizeof(absolute_path))) {
+        return -ENAMETOOLONG;
+    }
+
+    errno_t status = 0;
+    inode_t *inode = resolve_inode(absolute_path, &status);
+
+    if (!inode) {
+        return status;
+    }
 
     if (!inode->ops || !inode->ops->stat) {
         inode_unref(inode);
+
         return -ENOSYS;
     }
 
-    err = inode->ops->stat(inode, out);
+    status = inode->ops->stat(inode, stat_out);
     inode_unref(inode);
-    return err;
+
+    return status;
 }
 
-errno_t vfs_statat(process_t *proc, int at_fd, const char *path, int flags,
-                   vfs_stat_t *out) {
-    if (!path || !out) return -EINVAL;
+/* Handle empty-path descriptor stats and the supported absolute/CWD-relative path cases. */
+errno_t vfs_statat(process_t *process, int directory_descriptor, const char *path, int flags,
+    vfs_stat_t *stat_out) {
+    if (!path || !stat_out) {
+        return -EINVAL;
+    }
+
     /* AT_EMPTY_PATH: stat the fd itself */
-    if ((flags & AT_EMPTY_PATH) && path[0] == '\0')
-        return vfs_fstat(proc, at_fd, out);
-    /* Absolute paths and AT_FDCWD both handled by vfs_stat via path_to_abs */
-    if (path[0] == '/' || at_fd == AT_FDCWD)
-        return vfs_stat(proc, path, out);
-    return -ENOSYS;   /* relative path + non-CWD dirfd not supported */
+    if ((flags & AT_EMPTY_PATH) && path[0] == '\0') {
+        return vfs_fstat(process, directory_descriptor, stat_out);
+    }
+
+    /* Absolute paths and AT_FDCWD both handled by vfs_stat via make_absolute_path */
+    if (path[0] == '/' || directory_descriptor == AT_FDCWD) {
+        return vfs_stat(process, path, stat_out);
+    }
+
+    return -ENOSYS; /* relative path + non-CWD dirfd not supported */
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_ioctl                                                           */
-/* ------------------------------------------------------------------ */
+/* vfs_ioctl */
 
-errno_t vfs_ioctl(process_t *proc, int fd, unsigned long req, uintptr_t arg) {
-    if (!proc) return -EINVAL;
+/* Keep the open description alive while invoking its device-specific control callback. */
+errno_t vfs_ioctl(
+    process_t *process, int file_descriptor, unsigned long request, uintptr_t argument) {
+    if (!process) {
+        return -EINVAL;
+    }
 
-    errno_t err = 0;
-    file_t *f   = fd_get(proc, fd, &err);
-    if (!f) return err;
+    errno_t status = 0;
+    file_t *file = get_referenced_file(process, file_descriptor, &status);
 
-    if (!f->ops || !f->ops->ioctl) { file_unref(f); return -ENOTTY; }
+    if (!file) {
+        return status;
+    }
 
-    err = f->ops->ioctl(f, req, arg);
-    file_unref(f);
-    return err;
+    if (!file->ops || !file->ops->ioctl) {
+        file_unref(file);
+
+        return -ENOTTY;
+    }
+
+    status = file->ops->ioctl(file, request, argument);
+    file_unref(file);
+
+    return status;
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_seek                                                            */
-/* ------------------------------------------------------------------ */
+/* vfs_seek */
 
-errno_t vfs_seek(process_t *proc, int fd, int64_t offset, int whence,
-                 int64_t *new_pos) {
-    if (!proc || !new_pos) return -EINVAL;
+/* Dispatch regular-file seeks or update the enumeration index of a directory description. */
+errno_t vfs_seek(process_t *process, int file_descriptor, int64_t offset, int whence,
+    int64_t *new_position_out) {
+    if (!process || !new_position_out) {
+        return -EINVAL;
+    }
 
-    errno_t err = 0;
-    file_t *f   = fd_get(proc, fd, &err);
-    if (!f) return err;
+    errno_t status = 0;
+    file_t *file = get_referenced_file(process, file_descriptor, &status);
 
-    if (!f->ops || !f->ops->seek) {
+    if (!file) {
+        return status;
+    }
+
+    if (!file->ops || !file->ops->seek) {
         /* Directories have no seek op; allow SEEK_SET and SEEK_CUR(0) on
          * the position index so getdents64 can peek and rewind. */
-        if (S_ISDIR(f->inode->mode)) {
-            bool irq = spinlock_acquire(&f->lock);
+        if (S_ISDIR(file->inode->mode)) {
+            bool interrupts_enabled = spinlock_acquire(&file->lock);
+
             if (whence == SEEK_SET && offset >= 0) {
-                f->pos   = offset;
-                *new_pos = offset;
-                spinlock_release(&f->lock, irq);
-                file_unref(f);
+                file->pos = offset;
+                *new_position_out = offset;
+                spinlock_release(&file->lock, interrupts_enabled);
+                file_unref(file);
+
                 return EOK;
             }
+
             if (whence == SEEK_CUR && offset == 0) {
-                *new_pos = f->pos;
-                spinlock_release(&f->lock, irq);
-                file_unref(f);
+                *new_position_out = file->pos;
+                spinlock_release(&file->lock, interrupts_enabled);
+                file_unref(file);
+
                 return EOK;
             }
-            spinlock_release(&f->lock, irq);
+
+            spinlock_release(&file->lock, interrupts_enabled);
         }
-        file_unref(f);
-        return -ENOSYS;
+
+        errno_t seek_error = S_ISDIR(file->inode->mode) ? -EINVAL : -ESPIPE;
+        file_unref(file);
+
+        return seek_error;
     }
 
-    err = f->ops->seek(f, offset, whence, new_pos);
-    file_unref(f);
-    return err;
+    status = file->ops->seek(file, offset, whence, new_position_out);
+    file_unref(file);
+
+    return status;
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_mkdir                                                           */
-/* ------------------------------------------------------------------ */
+/* vfs_mkdir */
 
-errno_t vfs_mkdir(process_t *proc, const char *path, uint32_t mode) {
-    if (!path) return -EINVAL;
-
-    char abspath[VFS_PATH_MAX];
-    if (!path_to_abs(proc, path, abspath, sizeof(abspath))) return -ENAMETOOLONG;
-
-    char        parent[VFS_PATH_MAX];
-    const char *basename = NULL;
-    if (!path_split(abspath, parent, &basename) || !basename || !*basename)
+/* Resolve the parent, apply the process creation mask, and request a child directory. */
+errno_t vfs_mkdir(process_t *process, const char *path, uint32_t mode) {
+    if (!path) {
         return -EINVAL;
+    }
 
-    errno_t  err = 0;
-    inode_t *dir = vfs_resolve(parent, &err);
-    if (!dir) return err;
+    char absolute_path[VFS_PATH_MAX];
 
-    if (!S_ISDIR(dir->mode) || !dir->ops || !dir->ops->mkdir) {
-        inode_unref(dir);
+    if (!make_absolute_path(process, path, absolute_path, sizeof(absolute_path))) {
+        return -ENAMETOOLONG;
+    }
+
+    char parent[VFS_PATH_MAX];
+    const char *basename = NULL;
+
+    if (!split_parent_path(absolute_path, parent, &basename) || !basename || !*basename) {
+        return -EINVAL;
+    }
+
+    errno_t status = 0;
+    inode_t *directory = resolve_inode(parent, &status);
+
+    if (!directory) {
+        return status;
+    }
+
+    if (!S_ISDIR(directory->mode) || !directory->ops || !directory->ops->mkdir) {
+        inode_unref(directory);
+
         return -ENOTDIR;
     }
 
-    uint32_t eff_mode = (mode & 0777u) & (proc ? ~proc->umask : 0777u);
-    err = dir->ops->mkdir(dir, basename, eff_mode);
-    inode_unref(dir);
-    return err;
+    uint32_t effective_mode = creation_permissions(process, mode);
+    status = directory->ops->mkdir(directory, basename, effective_mode);
+    inode_unref(directory);
+
+    return status;
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_setup_std_fds                                                   */
-/* ------------------------------------------------------------------ */
+/* vfs_setup_std_fds */
 
-void vfs_setup_std_fds(process_t *proc) {
-    int fd;
+/* Populate the first three free slots with terminal descriptions, falling back to null. */
+void vfs_setup_std_fds(process_t *process) {
+    int file_descriptor;
+
     /* fd 0: stdin  - open /dev/tty read-only */
-    if (vfs_open(proc, "/dev/tty", O_RDONLY, 0, &fd) < 0)
-        vfs_open(proc, "/dev/null", O_RDONLY, 0, &fd);
+    if (vfs_open(process, "/dev/tty", O_RDONLY, 0, &file_descriptor) < 0) {
+        vfs_open(process, "/dev/null", O_RDONLY, 0, &file_descriptor);
+    }
 
     /* fd 1: stdout - open /dev/tty write-only */
-    if (vfs_open(proc, "/dev/tty", O_WRONLY, 0, &fd) < 0)
-        vfs_open(proc, "/dev/null", O_WRONLY, 0, &fd);
+    if (vfs_open(process, "/dev/tty", O_WRONLY, 0, &file_descriptor) < 0) {
+        vfs_open(process, "/dev/null", O_WRONLY, 0, &file_descriptor);
+    }
 
     /* fd 2: stderr - open /dev/tty write-only */
-    if (vfs_open(proc, "/dev/tty", O_WRONLY, 0, &fd) < 0)
-        vfs_open(proc, "/dev/null", O_WRONLY, 0, &fd);
+    if (vfs_open(process, "/dev/tty", O_WRONLY, 0, &file_descriptor) < 0) {
+        vfs_open(process, "/dev/null", O_WRONLY, 0, &file_descriptor);
+    }
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_readdir                                                         */
-/* ------------------------------------------------------------------ */
+/* vfs_readdir */
 
-errno_t vfs_readdir(process_t *proc, int fd,
-                    char *name_out, size_t name_max,
-                    uint64_t *ino_out, uint32_t *mode_out) {
-    if (!proc || !name_out || !ino_out || !mode_out) return -EINVAL;
+/* Borrow a directory description and advance its enumeration index after a successful lookup. */
+errno_t vfs_readdir(process_t *process, int file_descriptor, char *name_out, size_t name_capacity,
+    uint64_t *ino_out, uint32_t *mode_out) {
+    if (!process || !name_out || name_capacity < 2 || !ino_out || !mode_out) {
+        return -EINVAL;
+    }
 
-    errno_t err = 0;
-    file_t *f   = fd_get(proc, fd, &err);
-    if (!f) return err;
+    errno_t status = 0;
+    file_t *file = get_referenced_file(process, file_descriptor, &status);
 
-    inode_t *inode = f->inode;
-    if (!S_ISDIR(inode->mode)) { file_unref(f); return -ENOTDIR; }
-    if (!inode->ops || !inode->ops->readdir) { file_unref(f); return -ENOSYS; }
+    if (!file) {
+        return status;
+    }
 
-    bool irq = spinlock_acquire(&f->lock);
-    uint64_t idx = (uint64_t)(f->pos < 0 ? 0 : f->pos);
-    spinlock_release(&f->lock, irq);
+    inode_t *inode = file->inode;
 
+    if (!S_ISDIR(inode->mode)) {
+        file_unref(file);
+
+        return -ENOTDIR;
+    }
+
+    if (!inode->ops || !inode->ops->readdir) {
+        file_unref(file);
+
+        return -ENOSYS;
+    }
+
+    /* Directory callbacks are nonblocking. Hold position ownership across the
+     * lookup so dup/inherited descriptions cannot consume the same entry twice.
+     * Lock order remains file -> directory inode, as for regular I/O. */
+    bool interrupts_enabled = spinlock_acquire(&file->lock);
+    uint64_t entry_index = (uint64_t)(file->pos < 0 ? 0 : file->pos);
     inode_t *child = NULL;
-    err = inode->ops->readdir(inode, idx, name_out, name_max, &child);
-    if (err == EOK) {
-        *ino_out  = child->ino;
+    status = inode->ops->readdir(inode, entry_index, name_out, name_capacity, &child);
+
+    if (status == EOK) {
+        *ino_out = child->ino;
         *mode_out = child->mode;
+        file->pos++;
+    }
+
+    spinlock_release(&file->lock, interrupts_enabled);
+
+    if (child) {
         inode_unref(child);
-
-        irq = spinlock_acquire(&f->lock);
-        f->pos++;
-        spinlock_release(&f->lock, irq);
     }
 
-    file_unref(f);
-    return err;
+    file_unref(file);
+
+    return status;
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_dup / vfs_dup2                                                  */
-/* ------------------------------------------------------------------ */
+/* vfs_dup / vfs_dup2 */
 
-errno_t vfs_dup(process_t *proc, int oldfd, int *newfd_out) {
-    if (!proc || !newfd_out) return -EINVAL;
-    if (oldfd < 0 || oldfd >= FD_TABLE_SIZE) return -EBADF;
+/* Install a second descriptor referencing the same open description, with close-on-exec cleared. */
+errno_t vfs_dup(process_t *process, int source_descriptor, int *destination_descriptor_out) {
+    if (!process || !destination_descriptor_out) {
+        return -EINVAL;
+    }
 
-    bool irq = spinlock_acquire(&proc->lock);
-    file_t *f = proc->fd_table.files[oldfd];
-    if (!f) { spinlock_release(&proc->lock, irq); return -EBADF; }
+    if (source_descriptor < 0 || source_descriptor >= FD_TABLE_SIZE) {
+        return -EBADF;
+    }
 
-    int newfd = fd_alloc(proc);
-    if (newfd < 0) { spinlock_release(&proc->lock, irq); return -EMFILE; }
+    bool interrupts_enabled = spinlock_acquire(&process->lock);
+    file_t *file = process->fd_table.files[source_descriptor];
 
-    file_ref(f);
-    proc->fd_table.files[newfd]  = f;
-    proc->fd_table.cloexec[newfd] = 0;   /* dup never inherits FD_CLOEXEC */
-    spinlock_release(&proc->lock, irq);
+    if (!file) {
+        spinlock_release(&process->lock, interrupts_enabled);
 
-    *newfd_out = newfd;
-    return EOK;
-}
+        return -EBADF;
+    }
 
-errno_t vfs_dup2(process_t *proc, int oldfd, int newfd) {
-    if (!proc) return -EINVAL;
-    if (oldfd < 0 || oldfd >= FD_TABLE_SIZE) return -EBADF;
-    if (newfd < 0 || newfd >= FD_TABLE_SIZE) return -EBADF;
-    if (oldfd == newfd) return EOK;
+    int destination_descriptor = allocate_descriptor(process);
 
-    bool irq = spinlock_acquire(&proc->lock);
-    file_t *src = proc->fd_table.files[oldfd];
-    if (!src) { spinlock_release(&proc->lock, irq); return -EBADF; }
+    if (destination_descriptor < 0) {
+        spinlock_release(&process->lock, interrupts_enabled);
 
-    file_t *old = proc->fd_table.files[newfd];
-    file_ref(src);
-    proc->fd_table.files[newfd]  = src;
-    proc->fd_table.cloexec[newfd] = 0;   /* dup2 never inherits FD_CLOEXEC */
-    spinlock_release(&proc->lock, irq);
-
-    if (old) file_unref(old);   /* close previous occupant outside the lock */
-    return EOK;
-}
-
-/* ------------------------------------------------------------------ */
-/* vfs_pipe                                                            */
-/* ------------------------------------------------------------------ */
-
-errno_t vfs_pipe(process_t *proc, int fds[2]) {
-    if (!proc || !fds) return -EINVAL;
-
-    file_t *rfile = NULL, *wfile = NULL;
-    errno_t err = pipe_alloc_files(&rfile, &wfile);
-    if (err < 0) return err;
-
-    bool irq = spinlock_acquire(&proc->lock);
-    int rfd = fd_alloc(proc);
-    if (rfd < 0) {
-        spinlock_release(&proc->lock, irq);
-        file_unref(rfile);
-        file_unref(wfile);
         return -EMFILE;
     }
-    proc->fd_table.files[rfd] = rfile;
 
-    int wfd = fd_alloc(proc);
-    if (wfd < 0) {
-        proc->fd_table.files[rfd] = NULL;
-        spinlock_release(&proc->lock, irq);
-        file_unref(rfile);
-        file_unref(wfile);
-        return -EMFILE;
-    }
-    proc->fd_table.files[wfd] = wfile;
-    spinlock_release(&proc->lock, irq);
+    file_ref(file);
+    process->fd_table.files[destination_descriptor] = file;
+    process->fd_table.cloexec[destination_descriptor] = 0; /* dup never inherits FD_CLOEXEC */
+    spinlock_release(&process->lock, interrupts_enabled);
 
-    fds[0] = rfd;
-    fds[1] = wfd;
+    *destination_descriptor_out = destination_descriptor;
+
     return EOK;
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_pipe2                                                           */
-/* ------------------------------------------------------------------ */
+/* Replace a descriptor under the process lock; release the displaced file outside the lock. */
+errno_t vfs_dup2(process_t *process, int source_descriptor, int destination_descriptor) {
+    if (!process) {
+        return -EINVAL;
+    }
 
-errno_t vfs_pipe2(process_t *proc, int fds[2], int flags) {
-    if (!proc || !fds) return -EINVAL;
-    if (flags & ~(O_CLOEXEC | O_NONBLOCK)) return -EINVAL;
+    if (source_descriptor < 0 || source_descriptor >= FD_TABLE_SIZE) {
+        return -EBADF;
+    }
 
-    file_t *rfile = NULL, *wfile = NULL;
-    errno_t err = pipe_alloc_files(&rfile, &wfile);
-    if (err < 0) return err;
+    if (destination_descriptor < 0 || destination_descriptor >= FD_TABLE_SIZE) {
+        return -EBADF;
+    }
+
+    bool interrupts_enabled = spinlock_acquire(&process->lock);
+    file_t *source = process->fd_table.files[source_descriptor];
+
+    if (!source) {
+        spinlock_release(&process->lock, interrupts_enabled);
+
+        return -EBADF;
+    }
+
+    if (source_descriptor == destination_descriptor) {
+        spinlock_release(&process->lock, interrupts_enabled);
+
+        return EOK;
+    }
+
+    file_t *replaced_file = process->fd_table.files[destination_descriptor];
+    file_ref(source);
+    process->fd_table.files[destination_descriptor] = source;
+    process->fd_table.cloexec[destination_descriptor] = 0; /* dup2 never inherits FD_CLOEXEC */
+    spinlock_release(&process->lock, interrupts_enabled);
+
+    if (replaced_file) {
+        file_unref(replaced_file); /* close previous occupant outside the lock */
+    }
+
+    return EOK;
+}
+
+/* vfs_pipe */
+
+/* Allocate both endpoints and publish their descriptor slots together under the process lock. */
+errno_t vfs_pipe(process_t *process, int descriptors[2]) {
+    if (!process || !descriptors) {
+        return -EINVAL;
+    }
+
+    file_t *read_file = NULL, *write_file = NULL;
+    errno_t status = pipe_alloc_files(&read_file, &write_file);
+
+    if (status < 0) {
+        return status;
+    }
+
+    bool interrupts_enabled = spinlock_acquire(&process->lock);
+    int read_descriptor = allocate_descriptor(process);
+
+    if (read_descriptor < 0) {
+        spinlock_release(&process->lock, interrupts_enabled);
+        file_unref(read_file);
+        file_unref(write_file);
+
+        return -EMFILE;
+    }
+
+    process->fd_table.files[read_descriptor] = read_file;
+    process->fd_table.cloexec[read_descriptor] = 0;
+
+    int write_descriptor = allocate_descriptor(process);
+
+    if (write_descriptor < 0) {
+        process->fd_table.files[read_descriptor] = NULL;
+        spinlock_release(&process->lock, interrupts_enabled);
+        file_unref(read_file);
+        file_unref(write_file);
+
+        return -EMFILE;
+    }
+
+    process->fd_table.files[write_descriptor] = write_file;
+    process->fd_table.cloexec[write_descriptor] = 0;
+    spinlock_release(&process->lock, interrupts_enabled);
+
+    descriptors[0] = read_descriptor;
+    descriptors[1] = write_descriptor;
+
+    return EOK;
+}
+
+/* vfs_pipe2 */
+
+/* Publish pipe endpoints with the requested supported status and descriptor flags. */
+errno_t vfs_pipe2(process_t *process, int descriptors[2], int flags) {
+    if (!process || !descriptors) {
+        return -EINVAL;
+    }
+
+    if (flags & ~(O_CLOEXEC | O_NONBLOCK)) {
+        return -EINVAL;
+    }
+
+    file_t *read_file = NULL, *write_file = NULL;
+    errno_t status = pipe_alloc_files(&read_file, &write_file);
+
+    if (status < 0) {
+        return status;
+    }
 
     if (flags & O_NONBLOCK) {
-        rfile->flags |= O_NONBLOCK;
-        wfile->flags |= O_NONBLOCK;
+        read_file->flags |= O_NONBLOCK;
+        write_file->flags |= O_NONBLOCK;
     }
 
-    bool irq = spinlock_acquire(&proc->lock);
-    int rfd = fd_alloc(proc);
-    if (rfd < 0) {
-        spinlock_release(&proc->lock, irq);
-        file_unref(rfile); file_unref(wfile);
+    bool interrupts_enabled = spinlock_acquire(&process->lock);
+    int read_descriptor = allocate_descriptor(process);
+
+    if (read_descriptor < 0) {
+        spinlock_release(&process->lock, interrupts_enabled);
+        file_unref(read_file);
+        file_unref(write_file);
+
         return -EMFILE;
     }
-    proc->fd_table.files[rfd]  = rfile;
-    proc->fd_table.cloexec[rfd] = (flags & O_CLOEXEC) ? 1 : 0;
 
-    int wfd = fd_alloc(proc);
-    if (wfd < 0) {
-        proc->fd_table.files[rfd]  = NULL;
-        proc->fd_table.cloexec[rfd] = 0;
-        spinlock_release(&proc->lock, irq);
-        file_unref(rfile); file_unref(wfile);
+    process->fd_table.files[read_descriptor] = read_file;
+    process->fd_table.cloexec[read_descriptor] = (flags & O_CLOEXEC) ? 1 : 0;
+
+    int write_descriptor = allocate_descriptor(process);
+
+    if (write_descriptor < 0) {
+        process->fd_table.files[read_descriptor] = NULL;
+        process->fd_table.cloexec[read_descriptor] = 0;
+        spinlock_release(&process->lock, interrupts_enabled);
+        file_unref(read_file);
+        file_unref(write_file);
+
         return -EMFILE;
     }
-    proc->fd_table.files[wfd]  = wfile;
-    proc->fd_table.cloexec[wfd] = (flags & O_CLOEXEC) ? 1 : 0;
-    spinlock_release(&proc->lock, irq);
 
-    fds[0] = rfd;
-    fds[1] = wfd;
+    process->fd_table.files[write_descriptor] = write_file;
+    process->fd_table.cloexec[write_descriptor] = (flags & O_CLOEXEC) ? 1 : 0;
+    spinlock_release(&process->lock, interrupts_enabled);
+
+    descriptors[0] = read_descriptor;
+    descriptors[1] = write_descriptor;
+
     return EOK;
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_dup3                                                            */
-/* ------------------------------------------------------------------ */
+/* vfs_dup3 */
 
-errno_t vfs_dup3(process_t *proc, int oldfd, int newfd, int flags) {
-    if (!proc) return -EINVAL;
-    if (oldfd < 0 || oldfd >= FD_TABLE_SIZE) return -EBADF;
-    if (newfd < 0 || newfd >= FD_TABLE_SIZE) return -EBADF;
-    if (oldfd == newfd) return -EINVAL;   /* dup3 requires oldfd != newfd */
-    if (flags & ~O_CLOEXEC) return -EINVAL;
-
-    bool irq = spinlock_acquire(&proc->lock);
-    file_t *src = proc->fd_table.files[oldfd];
-    if (!src) { spinlock_release(&proc->lock, irq); return -EBADF; }
-    file_t *old = proc->fd_table.files[newfd];
-    file_ref(src);
-    proc->fd_table.files[newfd]  = src;
-    proc->fd_table.cloexec[newfd] = (flags & O_CLOEXEC) ? 1 : 0;
-    spinlock_release(&proc->lock, irq);
-
-    if (old) file_unref(old);
-    return EOK;
-}
-
-/* ------------------------------------------------------------------ */
-/* vfs_chdir / vfs_getcwd                                              */
-/* ------------------------------------------------------------------ */
-
-errno_t vfs_chdir(process_t *proc, const char *path) {
-    if (!proc || !path) return -EINVAL;
-
-    char abspath[VFS_PATH_MAX];
-    if (!path_to_abs(proc, path, abspath, sizeof(abspath))) return -ENAMETOOLONG;
-
-    errno_t  err   = 0;
-    inode_t *inode = vfs_resolve(abspath, &err);
-    if (!inode) return err;
-
-    if (!S_ISDIR(inode->mode)) { inode_unref(inode); return -ENOTDIR; }
-
-    bool irq = spinlock_acquire(&proc->lock);
-    inode_t *old_cwd = proc->cwd;
-    proc->cwd = inode;
-    size_t len = strlen(abspath);
-    if (len >= VFS_PATH_MAX) len = VFS_PATH_MAX - 1;
-    __builtin_memcpy(proc->cwd_path, abspath, len + 1);
-    spinlock_release(&proc->lock, irq);
-
-    if (old_cwd) inode_unref(old_cwd);
-    return EOK;
-}
-
-errno_t vfs_getcwd(process_t *proc, char *buf, size_t size) {
-    if (!proc || !buf || size == 0) return -EINVAL;
-
-    bool irq = spinlock_acquire(&proc->lock);
-    size_t len = strlen(proc->cwd_path);
-    if (len + 1 > size) { spinlock_release(&proc->lock, irq); return -ERANGE; }
-    __builtin_memcpy(buf, proc->cwd_path, len + 1);
-    spinlock_release(&proc->lock, irq);
-    return EOK;
-}
-
-/* ------------------------------------------------------------------ */
-/* vfs_unlink                                                          */
-/* ------------------------------------------------------------------ */
-
-errno_t vfs_unlink(process_t *proc, const char *path) {
-    if (!path) return -EINVAL;
-
-    char abspath[VFS_PATH_MAX];
-    if (!path_to_abs(proc, path, abspath, sizeof(abspath))) return -ENAMETOOLONG;
-
-    char        parent[VFS_PATH_MAX];
-    const char *basename = NULL;
-    if (!path_split(abspath, parent, &basename) || !basename || !*basename)
+/* Replace a distinct destination descriptor with explicitly selected close-on-exec behavior. */
+errno_t vfs_dup3(process_t *process, int source_descriptor, int destination_descriptor, int flags) {
+    if (!process) {
         return -EINVAL;
+    }
 
-    errno_t  err = 0;
-    inode_t *dir = vfs_resolve(parent, &err);
-    if (!dir) return err;
+    if (source_descriptor < 0 || source_descriptor >= FD_TABLE_SIZE) {
+        return -EBADF;
+    }
 
-    if (!S_ISDIR(dir->mode) || !dir->ops || !dir->ops->unlink) {
-        inode_unref(dir);
+    if (destination_descriptor < 0 || destination_descriptor >= FD_TABLE_SIZE) {
+        return -EBADF;
+    }
+
+    if (source_descriptor == destination_descriptor) {
+        return -EINVAL; /* dup3 requires source_descriptor != destination_descriptor */
+    }
+
+    if (flags & ~O_CLOEXEC) {
+        return -EINVAL;
+    }
+
+    bool interrupts_enabled = spinlock_acquire(&process->lock);
+    file_t *source = process->fd_table.files[source_descriptor];
+
+    if (!source) {
+        spinlock_release(&process->lock, interrupts_enabled);
+
+        return -EBADF;
+    }
+
+    file_t *replaced_file = process->fd_table.files[destination_descriptor];
+    file_ref(source);
+    process->fd_table.files[destination_descriptor] = source;
+    process->fd_table.cloexec[destination_descriptor] = (flags & O_CLOEXEC) ? 1 : 0;
+    spinlock_release(&process->lock, interrupts_enabled);
+
+    if (replaced_file) {
+        file_unref(replaced_file);
+    }
+
+    return EOK;
+}
+
+/* vfs_chdir / vfs_getcwd */
+
+/* Transfer the resolved directory reference into the process and release its previous CWD. */
+errno_t vfs_chdir(process_t *process, const char *path) {
+    if (!process || !path) {
+        return -EINVAL;
+    }
+
+    char absolute_path[VFS_PATH_MAX];
+
+    if (!make_absolute_path(process, path, absolute_path, sizeof(absolute_path))) {
+        return -ENAMETOOLONG;
+    }
+
+    errno_t status = 0;
+    inode_t *inode = resolve_inode(absolute_path, &status);
+
+    if (!inode) {
+        return status;
+    }
+
+    if (!S_ISDIR(inode->mode)) {
+        inode_unref(inode);
+
+        return -ENOTDIR;
+    }
+
+    bool interrupts_enabled = spinlock_acquire(&process->lock);
+    inode_t *old_cwd = process->cwd;
+    process->cwd = inode;
+
+    size_t length = strlen(absolute_path);
+
+    if (length >= VFS_PATH_MAX) {
+        length = VFS_PATH_MAX - 1;
+    }
+
+    __builtin_memcpy(process->cwd_path, absolute_path, length + 1);
+    spinlock_release(&process->lock, interrupts_enabled);
+
+    if (old_cwd) {
+        inode_unref(old_cwd);
+    }
+
+    return EOK;
+}
+
+/* Copy a consistent snapshot of the process working-directory path. */
+errno_t vfs_getcwd(process_t *process, char *buffer, size_t size) {
+    if (!process || !buffer || size == 0) {
+        return -EINVAL;
+    }
+
+    bool interrupts_enabled = spinlock_acquire(&process->lock);
+    size_t length = strlen(process->cwd_path);
+
+    if (length + 1 > size) {
+        spinlock_release(&process->lock, interrupts_enabled);
+
+        return -ERANGE;
+    }
+
+    __builtin_memcpy(buffer, process->cwd_path, length + 1);
+    spinlock_release(&process->lock, interrupts_enabled);
+
+    return EOK;
+}
+
+/* vfs_unlink */
+
+/* Resolve the parent and reject directory removal before invoking the filesystem unlink callback. */
+errno_t vfs_unlink(process_t *process, const char *path) {
+    if (!path) {
+        return -EINVAL;
+    }
+
+    char absolute_path[VFS_PATH_MAX];
+
+    if (!make_absolute_path(process, path, absolute_path, sizeof(absolute_path))) {
+        return -ENAMETOOLONG;
+    }
+
+    char parent[VFS_PATH_MAX];
+    const char *basename = NULL;
+
+    if (!split_parent_path(absolute_path, parent, &basename) || !basename || !*basename) {
+        return -EINVAL;
+    }
+
+    errno_t status = 0;
+    inode_t *directory = resolve_inode(parent, &status);
+
+    if (!directory) {
+        return status;
+    }
+
+    if (!S_ISDIR(directory->mode) || !directory->ops || !directory->ops->unlink) {
+        inode_unref(directory);
+
         return -ENOTDIR;
     }
 
     /* Reject attempt to unlink a directory (use rmdir instead) */
     inode_t *target = NULL;
-    errno_t e2 = dir->ops->lookup(dir, basename, &target);
-    if (e2 == EOK) {
+    errno_t lookup_status = directory->ops->lookup(directory, basename, &target);
+
+    if (lookup_status == EOK) {
         bool is_dir = S_ISDIR(target->mode);
         inode_unref(target);
-        if (is_dir) { inode_unref(dir); return -EISDIR; }
+
+        if (is_dir) {
+            inode_unref(directory);
+
+            return -EISDIR;
+        }
     }
 
-    err = dir->ops->unlink(dir, basename);
-    inode_unref(dir);
-    return err;
+    status = directory->ops->unlink(directory, basename);
+    inode_unref(directory);
+
+    return status;
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_rmdir                                                           */
-/* ------------------------------------------------------------------ */
+/* vfs_rmdir */
 
-errno_t vfs_rmdir(process_t *proc, const char *path) {
-    if (!path) return -EINVAL;
-
-    char abspath[VFS_PATH_MAX];
-    if (!path_to_abs(proc, path, abspath, sizeof(abspath))) return -ENAMETOOLONG;
-
-    char        parent[VFS_PATH_MAX];
-    const char *basename = NULL;
-    if (!path_split(abspath, parent, &basename) || !basename || !*basename)
+/* Reject a nonempty child directory before removing its parent entry. */
+errno_t vfs_rmdir(process_t *process, const char *path) {
+    if (!path) {
         return -EINVAL;
+    }
 
-    errno_t  err = 0;
-    inode_t *dir = vfs_resolve(parent, &err);
-    if (!dir) return err;
+    char absolute_path[VFS_PATH_MAX];
 
-    if (!S_ISDIR(dir->mode) || !dir->ops || !dir->ops->lookup) {
-        inode_unref(dir); return -ENOTDIR;
+    if (!make_absolute_path(process, path, absolute_path, sizeof(absolute_path))) {
+        return -ENAMETOOLONG;
+    }
+
+    char parent[VFS_PATH_MAX];
+    const char *basename = NULL;
+
+    if (!split_parent_path(absolute_path, parent, &basename) || !basename || !*basename) {
+        return -EINVAL;
+    }
+
+    errno_t status = 0;
+    inode_t *directory = resolve_inode(parent, &status);
+
+    if (!directory) {
+        return status;
+    }
+
+    if (!S_ISDIR(directory->mode) || !directory->ops || !directory->ops->lookup) {
+        inode_unref(directory);
+
+        return -ENOTDIR;
     }
 
     inode_t *target = NULL;
-    err = dir->ops->lookup(dir, basename, &target);
-    if (err < 0) { inode_unref(dir); return err; }
+    status = directory->ops->lookup(directory, basename, &target);
 
-    if (!S_ISDIR(target->mode)) {
-        inode_unref(target); inode_unref(dir); return -ENOTDIR;
+    if (status < 0) {
+        inode_unref(directory);
+
+        return status;
     }
 
-    /* Check empty: idx 1 should not exist (idx 0 is ".") */
+    if (!S_ISDIR(target->mode)) {
+        inode_unref(target);
+        inode_unref(directory);
+
+        return -ENOTDIR;
+    }
+
+    /* Check empty: entry_index 1 should not exist (entry_index 0 is ".") */
     if (target->ops && target->ops->readdir) {
-        char       tmp_name[2];
-        inode_t   *tmp_child = NULL;
-        errno_t    empty     = target->ops->readdir(target, 1, tmp_name,
-                                                     sizeof(tmp_name), &tmp_child);
+        char probe_name[2];
+        inode_t *probe_child = NULL;
+        errno_t empty =
+            target->ops->readdir(target, 1, probe_name, sizeof(probe_name), &probe_child);
         if (empty == EOK) {
-            inode_unref(tmp_child);
-            inode_unref(target); inode_unref(dir);
+            inode_unref(probe_child);
+            inode_unref(target);
+            inode_unref(directory);
+
             return -ENOTEMPTY;
         }
     }
+
     inode_unref(target);
 
-    if (!dir->ops->unlink) { inode_unref(dir); return -ENOSYS; }
-    err = dir->ops->unlink(dir, basename);
-    inode_unref(dir);
-    return err;
+    if (!directory->ops->unlink) {
+        inode_unref(directory);
+
+        return -ENOSYS;
+    }
+
+    status = directory->ops->unlink(directory, basename);
+    inode_unref(directory);
+
+    return status;
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_rename                                                          */
-/* ------------------------------------------------------------------ */
+/* vfs_rename */
 
-errno_t vfs_rename(process_t *proc, const char *oldpath, const char *newpath) {
-    if (!oldpath || !newpath) return -EINVAL;
-
-    char absold[VFS_PATH_MAX], absnew[VFS_PATH_MAX];
-    if (!path_to_abs(proc, oldpath, absold, sizeof(absold))) return -ENAMETOOLONG;
-    if (!path_to_abs(proc, newpath, absnew, sizeof(absnew))) return -ENAMETOOLONG;
-
-    char        old_parent[VFS_PATH_MAX], new_parent[VFS_PATH_MAX];
-    const char *old_base = NULL, *new_base = NULL;
-    if (!path_split(absold, old_parent, &old_base) || !old_base || !*old_base)
+/* Hold references to both parents while the filesystem transfers the named directory entry. */
+errno_t vfs_rename(process_t *process, const char *source_path, const char *destination_path) {
+    if (!source_path || !destination_path) {
         return -EINVAL;
-    if (!path_split(absnew, new_parent, &new_base) || !new_base || !*new_base)
+    }
+
+    char absolute_source[VFS_PATH_MAX], absolute_destination[VFS_PATH_MAX];
+
+    if (!make_absolute_path(process, source_path, absolute_source, sizeof(absolute_source))) {
+        return -ENAMETOOLONG;
+    }
+
+    if (!make_absolute_path(
+            process, destination_path, absolute_destination, sizeof(absolute_destination))) {
+        return -ENAMETOOLONG;
+    }
+
+    char source_parent_path[VFS_PATH_MAX], destination_parent_path[VFS_PATH_MAX];
+    const char *source_name = NULL, *destination_name = NULL;
+
+    if (!split_parent_path(absolute_source, source_parent_path, &source_name) || !source_name ||
+        !*source_name) {
         return -EINVAL;
+    }
 
-    errno_t  err    = 0;
-    inode_t *od = vfs_resolve(old_parent, &err);
-    if (!od) return err;
+    if (!split_parent_path(absolute_destination, destination_parent_path, &destination_name) ||
+        !destination_name || !*destination_name) {
+        return -EINVAL;
+    }
 
-    inode_t *nd = NULL;
-    if (strcmp(old_parent, new_parent) == 0) {
-        nd = od; inode_ref(nd);
+    errno_t status = 0;
+    inode_t *source_directory = resolve_inode(source_parent_path, &status);
+
+    if (!source_directory) {
+        return status;
+    }
+
+    inode_t *destination_directory = NULL;
+
+    if (strcmp(source_parent_path, destination_parent_path) == 0) {
+        destination_directory = source_directory;
+        inode_ref(destination_directory);
     } else {
-        nd = vfs_resolve(new_parent, &err);
-        if (!nd) { inode_unref(od); return err; }
+        destination_directory = resolve_inode(destination_parent_path, &status);
+
+        if (!destination_directory) {
+            inode_unref(source_directory);
+
+            return status;
+        }
     }
 
-    if (!S_ISDIR(od->mode) || !S_ISDIR(nd->mode)) {
-        inode_unref(od); inode_unref(nd); return -ENOTDIR;
-    }
-    if (!od->ops || !od->ops->rename) {
-        inode_unref(od); inode_unref(nd); return -ENOSYS;
+    if (!S_ISDIR(source_directory->mode) || !S_ISDIR(destination_directory->mode)) {
+        inode_unref(source_directory);
+        inode_unref(destination_directory);
+
+        return -ENOTDIR;
     }
 
-    err = od->ops->rename(od, old_base, nd, new_base);
-    inode_unref(od);
-    inode_unref(nd);
-    return err;
+    if (!source_directory->ops || !source_directory->ops->rename) {
+        inode_unref(source_directory);
+        inode_unref(destination_directory);
+
+        return -ENOSYS;
+    }
+
+    if (source_directory->ops != destination_directory->ops) {
+        inode_unref(source_directory);
+        inode_unref(destination_directory);
+
+        return -EXDEV;
+    }
+
+    status = source_directory->ops->rename(
+        source_directory, source_name, destination_directory, destination_name);
+    inode_unref(source_directory);
+    inode_unref(destination_directory);
+
+    return status;
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_truncate / vfs_ftruncate                                        */
-/* ------------------------------------------------------------------ */
+/* vfs_truncate / vfs_ftruncate */
 
-errno_t vfs_truncate(process_t *proc, const char *path, uint64_t size) {
-    if (!path) return -EINVAL;
+/* Resolve a regular-file inode and delegate its content resize operation. */
+errno_t vfs_truncate(process_t *process, const char *path, uint64_t size) {
+    if (!path) {
+        return -EINVAL;
+    }
 
-    char abspath[VFS_PATH_MAX];
-    if (!path_to_abs(proc, path, abspath, sizeof(abspath))) return -ENAMETOOLONG;
+    char absolute_path[VFS_PATH_MAX];
 
-    errno_t  err   = 0;
-    inode_t *inode = vfs_resolve(abspath, &err);
-    if (!inode) return err;
+    if (!make_absolute_path(process, path, absolute_path, sizeof(absolute_path))) {
+        return -ENAMETOOLONG;
+    }
 
-    if (S_ISDIR(inode->mode)) { inode_unref(inode); return -EISDIR; }
+    errno_t status = 0;
+    inode_t *inode = resolve_inode(absolute_path, &status);
+
+    if (!inode) {
+        return status;
+    }
+
+    if (S_ISDIR(inode->mode)) {
+        inode_unref(inode);
+
+        return -EISDIR;
+    }
+
     if (!inode->ops || !inode->ops->truncate) {
-        inode_unref(inode); return -ENOSYS;
+        inode_unref(inode);
+
+        return -ENOSYS;
     }
 
-    err = inode->ops->truncate(inode, size);
+    status = inode->ops->truncate(inode, size);
     inode_unref(inode);
-    return err;
+
+    return status;
 }
 
-errno_t vfs_ftruncate(process_t *proc, int fd, uint64_t size) {
-    if (!proc) return -EINVAL;
+/* Keep the descriptor's inode alive while resizing its regular-file contents. */
+errno_t vfs_ftruncate(process_t *process, int file_descriptor, uint64_t size) {
+    if (!process) {
+        return -EINVAL;
+    }
 
-    errno_t err = 0;
-    file_t *f   = fd_get(proc, fd, &err);
-    if (!f) return err;
+    errno_t status = 0;
+    file_t *file = get_referenced_file(process, file_descriptor, &status);
 
-    inode_t *inode = f->inode;
-    if (S_ISDIR(inode->mode)) { file_unref(f); return -EISDIR; }
-    if (!inode->ops || !inode->ops->truncate) { file_unref(f); return -ENOSYS; }
+    if (!file) {
+        return status;
+    }
 
-    err = inode->ops->truncate(inode, size);
-    file_unref(f);
-    return err;
+    inode_t *inode = file->inode;
+
+    if (S_ISDIR(inode->mode)) {
+        file_unref(file);
+
+        return -EISDIR;
+    }
+
+    if (!inode->ops || !inode->ops->truncate) {
+        file_unref(file);
+
+        return -ENOSYS;
+    }
+
+    status = inode->ops->truncate(inode, size);
+    file_unref(file);
+
+    return status;
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_access                                                          */
-/* ------------------------------------------------------------------ */
+/* vfs_access */
 
-errno_t vfs_access(process_t *proc, const char *path, int amode) {
-    (void)amode;   /* no permission model yet; just check existence */
-    if (!path) return -EINVAL;
+/* Check path existence; permission enforcement is not implemented by this baseline. */
+errno_t vfs_access(process_t *process, const char *path, int access_mode) {
+    (void)access_mode; /* no permission model yet; just check existence */
+    if (!path) {
+        return -EINVAL;
+    }
 
-    char abspath[VFS_PATH_MAX];
-    if (!path_to_abs(proc, path, abspath, sizeof(abspath))) return -ENAMETOOLONG;
+    char absolute_path[VFS_PATH_MAX];
 
-    errno_t  err   = 0;
-    inode_t *inode = vfs_resolve(abspath, &err);
-    if (!inode) return err;
+    if (!make_absolute_path(process, path, absolute_path, sizeof(absolute_path))) {
+        return -ENAMETOOLONG;
+    }
+
+    errno_t status = 0;
+    inode_t *inode = resolve_inode(absolute_path, &status);
+
+    if (!inode) {
+        return status;
+    }
+
     inode_unref(inode);
+
     return EOK;
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_fcntl                                                           */
-/* ------------------------------------------------------------------ */
+/* vfs_fcntl */
 
-errno_t vfs_fcntl(process_t *proc, int fd, int cmd, uintptr_t arg, int *result) {
-    if (!proc || !result) return -EINVAL;
-    if (fd < 0 || fd >= FD_TABLE_SIZE) return -EBADF;
+/* Separate per-descriptor flags from status flags shared by an open-file description. */
+errno_t vfs_fcntl(
+    process_t *process, int file_descriptor, int command, uintptr_t argument, int *result) {
+    if (!process || !result) {
+        return -EINVAL;
+    }
 
-    switch (cmd) {
+    if (file_descriptor < 0 || file_descriptor >= FD_TABLE_SIZE) {
+        return -EBADF;
+    }
+
+    switch (command) {
     case F_GETFD: {
-        bool irq = spinlock_acquire(&proc->lock);
-        if (!proc->fd_table.files[fd]) { spinlock_release(&proc->lock, irq); return -EBADF; }
-        *result = proc->fd_table.cloexec[fd] ? FD_CLOEXEC : 0;
-        spinlock_release(&proc->lock, irq);
+        bool interrupts_enabled = spinlock_acquire(&process->lock);
+
+        if (!process->fd_table.files[file_descriptor]) {
+            spinlock_release(&process->lock, interrupts_enabled);
+
+            return -EBADF;
+        }
+        *result = process->fd_table.cloexec[file_descriptor] ? FD_CLOEXEC : 0;
+        spinlock_release(&process->lock, interrupts_enabled);
+
         return EOK;
     }
+
     case F_SETFD: {
-        bool irq = spinlock_acquire(&proc->lock);
-        if (!proc->fd_table.files[fd]) { spinlock_release(&proc->lock, irq); return -EBADF; }
-        proc->fd_table.cloexec[fd] = ((int)arg & FD_CLOEXEC) ? 1 : 0;
+        bool interrupts_enabled = spinlock_acquire(&process->lock);
+
+        if (!process->fd_table.files[file_descriptor]) {
+            spinlock_release(&process->lock, interrupts_enabled);
+
+            return -EBADF;
+        }
+
+        process->fd_table.cloexec[file_descriptor] = ((int)argument & FD_CLOEXEC) ? 1 : 0;
         *result = 0;
-        spinlock_release(&proc->lock, irq);
+        spinlock_release(&process->lock, interrupts_enabled);
+
         return EOK;
     }
+
     case F_GETFL: {
-        errno_t err = 0;
-        file_t *f   = fd_get(proc, fd, &err);
-        if (!f) return err;
-        *result = f->flags;
-        file_unref(f);
+        errno_t status = 0;
+        file_t *file = get_referenced_file(process, file_descriptor, &status);
+
+        if (!file) {
+            return status;
+        }
+        *result = file_status_flags(file);
+        file_unref(file);
+
         return EOK;
     }
+
     case F_SETFL: {
-        errno_t err = 0;
-        file_t *f   = fd_get(proc, fd, &err);
-        if (!f) return err;
+        errno_t status = 0;
+        file_t *file = get_referenced_file(process, file_descriptor, &status);
+
+        if (!file) {
+            return status;
+        }
+
         /* Only O_APPEND and O_NONBLOCK are mutable */
-        bool irq = spinlock_acquire(&f->lock);
-        f->flags = (f->flags & ~(O_APPEND | O_NONBLOCK)) |
-                   ((int)arg & (O_APPEND | O_NONBLOCK));
-        spinlock_release(&f->lock, irq);
+        bool interrupts_enabled = spinlock_acquire(&file->lock);
+        __atomic_store_n(&file->flags,
+            (file_status_flags(file) & ~(O_APPEND | O_NONBLOCK)) |
+                ((int)argument & (O_APPEND | O_NONBLOCK)),
+            __ATOMIC_RELEASE);
+        spinlock_release(&file->lock, interrupts_enabled);
         *result = 0;
-        file_unref(f);
+        file_unref(file);
+
         return EOK;
     }
+
     case F_DUPFD:
     case F_DUPFD_CLOEXEC: {
-        int start = (arg < (uintptr_t)FD_TABLE_SIZE) ? (int)arg : FD_TABLE_SIZE;
-        bool irq = spinlock_acquire(&proc->lock);
-        if (!proc->fd_table.files[fd]) { spinlock_release(&proc->lock, irq); return -EBADF; }
-        file_t *src = proc->fd_table.files[fd];
-        int newfd = fd_alloc_from(proc, start);
-        if (newfd < 0) { spinlock_release(&proc->lock, irq); return -EMFILE; }
-        file_ref(src);
-        proc->fd_table.files[newfd]  = src;
-        proc->fd_table.cloexec[newfd] = (cmd == F_DUPFD_CLOEXEC) ? 1 : 0;
-        spinlock_release(&proc->lock, irq);
-        *result = newfd;
+        int start = (argument < (uintptr_t)FD_TABLE_SIZE) ? (int)argument : FD_TABLE_SIZE;
+        bool interrupts_enabled = spinlock_acquire(&process->lock);
+
+        if (!process->fd_table.files[file_descriptor]) {
+            spinlock_release(&process->lock, interrupts_enabled);
+
+            return -EBADF;
+        }
+
+        file_t *source = process->fd_table.files[file_descriptor];
+        int destination_descriptor = allocate_descriptor_from(process, start);
+
+        if (destination_descriptor < 0) {
+            spinlock_release(&process->lock, interrupts_enabled);
+
+            return -EMFILE;
+        }
+
+        file_ref(source);
+        process->fd_table.files[destination_descriptor] = source;
+        process->fd_table.cloexec[destination_descriptor] = (command == F_DUPFD_CLOEXEC) ? 1 : 0;
+        spinlock_release(&process->lock, interrupts_enabled);
+        *result = destination_descriptor;
+
         return EOK;
     }
+
     default:
         return -EINVAL;
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* vfs_openat                                                          */
-/* ------------------------------------------------------------------ */
+/* vfs_openat */
 
-errno_t vfs_openat(process_t *proc, int at_fd, const char *path,
-                   int flags, uint32_t mode, int *fd_out) {
-    if (!proc || !path || !fd_out) return -EINVAL;
-    /* Absolute paths and AT_FDCWD are both handled by vfs_open via path_to_abs */
-    if (path[0] == '/' || at_fd == AT_FDCWD)
-        return vfs_open(proc, path, flags, mode, fd_out);
-    return -ENOSYS;   /* relative + non-CWD dirfd not supported */
+/* Support absolute paths and AT_FDCWD; other directory-relative opens remain unsupported. */
+errno_t vfs_openat(process_t *process, int directory_descriptor, const char *path, int flags,
+    uint32_t mode, int *descriptor_out) {
+    if (!process || !path || !descriptor_out) {
+        return -EINVAL;
+    }
+
+    /* Absolute paths and AT_FDCWD are both handled by vfs_open via make_absolute_path */
+    if (path[0] == '/' || directory_descriptor == AT_FDCWD) {
+        return vfs_open(process, path, flags, mode, descriptor_out);
+    }
+
+    return -ENOSYS; /* relative + non-CWD dirfd not supported */
+}
+
+/* Retain the description across positioned I/O; filesystem callbacks serialize
+ * inode data without changing the offset shared by dup/inherited descriptors. */
+errno_t vfs_read_at(process_t *process, int descriptor, void *buffer, size_t length, int64_t offset,
+    size_t *completed) {
+    if (!process || !buffer || !completed || offset < 0) {
+        return -EINVAL;
+    }
+    *completed = 0;
+    errno_t status;
+    file_t *file = get_referenced_file(process, descriptor, &status);
+
+    if (!file) {
+        return status;
+    }
+
+    if ((file_status_flags(file) & O_ACCMODE) == O_WRONLY) {
+        status = -EBADF;
+    } else if (S_ISDIR(file->inode->mode)) {
+        status = -EISDIR;
+    } else if (!file->ops || !file->ops->read_at) {
+        status = -ESPIPE;
+    } else {
+        status = file->ops->read_at(file, buffer, length, offset, completed);
+    }
+
+    file_unref(file);
+
+    return status;
+}
+
+/* O_APPEND positional writes retain the current baseline append semantics. */
+errno_t vfs_write_at(process_t *process, int descriptor, const void *buffer, size_t length,
+    int64_t offset, size_t *completed) {
+    if (!process || !buffer || !completed || offset < 0) {
+        return -EINVAL;
+    }
+    *completed = 0;
+    errno_t status;
+    file_t *file = get_referenced_file(process, descriptor, &status);
+
+    if (!file) {
+        return status;
+    }
+
+    if ((file_status_flags(file) & O_ACCMODE) == O_RDONLY) {
+        status = -EBADF;
+    } else if (S_ISDIR(file->inode->mode)) {
+        status = -EISDIR;
+    } else if (!file->ops || !file->ops->write_at) {
+        status = -ESPIPE;
+    } else {
+        status = file->ops->write_at(file, buffer, length, offset, completed);
+    }
+
+    file_unref(file);
+
+    return status;
 }

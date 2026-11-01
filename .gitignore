@@ -1,12 +1,6 @@
-/limine
-/ovmf
-*.iso
-*.hdd
+/build/
 *.o
 *.a
 *.d
 *.elf
-qlog.txt
 /.vscode
-klog.txt
-base.img

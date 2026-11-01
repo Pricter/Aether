@@ -1,136 +1,98 @@
+.arch armv8-a+fp+simd
 .section .text
-.align 4
-
-/*
- * context_switch - cooperative kernel context switch
- *
- * void context_switch(context_regs_t *outgoing, context_regs_t *incoming)
- *   %rdi = outgoing (context_regs_t *)
- *   %rsi = incoming (context_regs_t *)
- *
- * Saves callee-saved registers of the outgoing thread into *outgoing, then
- * restores them from *incoming and jumps to incoming->rip.
- *
- * context_regs_t layout (byte offsets):
- *   0  rip    8  rsp   16 rbx   24 rbp
- *  32  r12   40 r13   48 r14   56 r15
- *
- * For the outgoing thread:
- *   - rip is set to the return address (the caller resumes here on next switch-in)
- *   - rsp is set to the caller's rsp BEFORE the return address (8(%rsp) at call time)
- *     so that when we restore rsp and jump to rip it looks like a normal return
- *
- * For a brand-new thread:
- *   - rip -> thread_entry_trampoline
- *   - rsp -> kstack_top (empty 16-byte-aligned stack)
- *   - r12 -> thread entry function (trampoline reads this)
- */
+.balign 4
 .global context_switch
-.type   context_switch, @function
+.type context_switch, %function
+/* AAPCS64 context call: x0 = outgoing, x1 = incoming. Caller-saved state is
+ * already handled by C ABI or, for preemption, the full exception frame. */
 context_switch:
-    /* --- save outgoing --- */
-    mov    (%rsp),   %rax
-    mov    %rax,     0(%rdi)    /* outgoing->rip = return address           */
+    stp x19, x20, [x0, #0]
+    stp x21, x22, [x0, #16]
+    stp x23, x24, [x0, #32]
+    stp x25, x26, [x0, #48]
+    stp x27, x28, [x0, #64]
+    stp x29, x30, [x0, #80]
+    mov x9, sp
+    str x9, [x0, #96]
+    add x9, x0, #112
+    stp q0, q1, [x9, #0]
+    stp q2, q3, [x9, #32]
+    stp q4, q5, [x9, #64]
+    stp q6, q7, [x9, #96]
+    stp q8, q9, [x9, #128]
+    stp q10, q11, [x9, #160]
+    stp q12, q13, [x9, #192]
+    stp q14, q15, [x9, #224]
+    stp q16, q17, [x9, #256]
+    stp q18, q19, [x9, #288]
+    stp q20, q21, [x9, #320]
+    stp q22, q23, [x9, #352]
+    stp q24, q25, [x9, #384]
+    stp q26, q27, [x9, #416]
+    stp q28, q29, [x9, #448]
+    stp q30, q31, [x9, #480]
+    mrs x9, fpcr
+    mrs x10, fpsr
+    str x9, [x0, #624]
+    str x10, [x0, #632]
+    mov x0, x1
+    b context_enter
+.size context_switch, . - context_switch
 
-    lea    8(%rsp),  %rax
-    mov    %rax,     8(%rdi)    /* outgoing->rsp = caller rsp past ret addr */
-
-    mov    %rbx,    16(%rdi)
-    mov    %rbp,    24(%rdi)
-    mov    %r12,    32(%rdi)
-    mov    %r13,    40(%rdi)
-    mov    %r14,    48(%rdi)
-    mov    %r15,    56(%rdi)
-
-    /* --- restore incoming --- */
-    mov    16(%rsi), %rbx
-    mov    24(%rsi), %rbp
-    mov    32(%rsi), %r12
-    mov    40(%rsi), %r13
-    mov    48(%rsi), %r14
-    mov    56(%rsi), %r15
-    mov     8(%rsi), %rsp       /* switch to incoming's kernel stack        */
-
-    jmp    *0(%rsi)             /* jump to incoming->rip                    */
-
-/*
- * thread_entry_trampoline - first-run entry stub for newly created threads.
- *
- * Jumped to by context_switch when a thread runs for the first time.
- * r12 holds the thread's entry function address (set during thread_create).
- *
- * Enables interrupts before calling the entry function so the thread runs
- * in normal kernel context regardless of whether it was first scheduled
- * from interrupt context (LAPIC preemption) or from scheduler_enter().
- *
- * If the entry function returns, falls through to thread_exit().
- */
-.global thread_entry_trampoline
-.type   thread_entry_trampoline, @function
-thread_entry_trampoline:
-    sti                 /* re-enable interrupts (may have been off in IRQ) */
-    call   *%r12        /* call thread entry function                      */
-    call   thread_exit  /* entry returned - clean up                       */
-    ud2                 /* unreachable                                     */
-
-/*
- * context_enter - one-way context switch (load only, no save).
- *
- * void context_enter(context_regs_t *incoming)
- *   %rdi = incoming (context_regs_t *)
- *
- * Restores callee-saved registers and RSP from *incoming, then jumps to
- * incoming->rip.  No outgoing context is saved.
- *
- * Used in scheduler_enter() and the current==NULL path of schedule() where
- * there is no outgoing thread context to preserve.  Using context_switch with
- * a stack-local dummy there is dangerous: the dummy captures the return
- * address (which is a KERNEL_BUG), and if something ever restores from it
- * the kernel panics.
- */
 .global context_enter
-.type   context_enter, @function
+.type context_enter, %function
+/* Restore a saved call frame or a fresh thread's trampoline return address. */
 context_enter:
-    mov    16(%rdi), %rbx
-    mov    24(%rdi), %rbp
-    mov    32(%rdi), %r12
-    mov    40(%rdi), %r13
-    mov    48(%rdi), %r14
-    mov    56(%rdi), %r15
-    mov     8(%rdi), %rsp
-    jmp    *0(%rdi)
+    /* Do not carry an outgoing thread's local exclusive reservation into
+     * another context, including a switch that does not pass through ERET. */
+    clrex
+    ldp x19, x20, [x0, #0]
+    ldp x21, x22, [x0, #16]
+    ldp x23, x24, [x0, #32]
+    ldp x25, x26, [x0, #48]
+    ldp x27, x28, [x0, #64]
+    ldp x29, x30, [x0, #80]
+    add x9, x0, #112
+    ldp q0, q1, [x9, #0]
+    ldp q2, q3, [x9, #32]
+    ldp q4, q5, [x9, #64]
+    ldp q6, q7, [x9, #96]
+    ldp q8, q9, [x9, #128]
+    ldp q10, q11, [x9, #160]
+    ldp q12, q13, [x9, #192]
+    ldp q14, q15, [x9, #224]
+    ldp q16, q17, [x9, #256]
+    ldp q18, q19, [x9, #288]
+    ldp q20, q21, [x9, #320]
+    ldp q22, q23, [x9, #352]
+    ldp q24, q25, [x9, #384]
+    ldp q26, q27, [x9, #416]
+    ldp q28, q29, [x9, #448]
+    ldp q30, q31, [x9, #480]
+    ldr x9, [x0, #624]
+    ldr x10, [x0, #632]
+    msr fpcr, x9
+    msr fpsr, x10
+    ldr x9, [x0, #96]
+    mov sp, x9
+    /* Publish the outgoing context only after its save and this SP change.
+     * Preserve the incoming link/frame across the C completion hook. */
+    stp x29, x30, [sp, #-16]!
+    bl scheduler_switch_complete
+    ldp x29, x30, [sp], #16
+    ret
+.size context_enter, . - context_enter
 
-/*
- * user_thread_trampoline - first-run entry for user-mode threads.
- *
- * Jumped to by context_switch when a user thread is scheduled for the first
- * time.  Register state loaded from the thread's context_regs_t by
- * context_switch (see thread_create_user in scheduler.c):
- *
- *   r12 = user RIP  (ELF e_entry)
- *   r13 = user RSP  (initial user stack pointer)
- *   r14 = CR3 value (process pagemap physical address)
- *
- * Kernel higher-half mappings are present in the user pagemap (copied from
- * mmu_kernel_pagemap by vmm_new_pagemap), so the kernel stack and code
- * remain accessible after the CR3 switch until IRETQ drops to ring-3.
- *
- * IRETQ frame (64-bit inter-privilege, 5 x 8 bytes, pushed in reverse):
- *   SS    = 0x1B (SEG_UDATA | RPL3)
- *   RSP   = user stack pointer
- *   RFLAGS= 0x202 (IF=1, reserved bit 1 set)
- *   CS    = 0x23 (SEG_UCODE | RPL3)
- *   RIP   = user entry point
- */
-.global user_thread_trampoline
-.type   user_thread_trampoline, @function
-user_thread_trampoline:
-    sti                     /* re-enable interrupts: on a valid kstack now  */
-    mov    %r14, %cr3       /* switch to user pagemap                       */
-
-    push   $0x1b            /* SS   = SEG_UDATA | 3                         */
-    push   %r13             /* RSP  = user stack pointer                    */
-    pushq  $0x202           /* RFLAGS: IF=1, bit 1 reserved (must be set)  */
-    push   $0x23            /* CS   = SEG_UCODE | 3                         */
-    push   %r12             /* RIP  = user entry point                      */
-    iretq
+.global thread_entry_trampoline
+.type thread_entry_trampoline, %function
+/* A fresh stack starts 16-byte aligned. x19 holds the borrowed entry function;
+ * returning from it terminates the thread rather than falling off its stack. */
+thread_entry_trampoline:
+    msr daifclr, #2
+    blr x19
+    bl thread_exit
+.Linvalid_thread_return:
+    msr daifset, #0xf
+    wfi
+    b .Linvalid_thread_return
+.size thread_entry_trampoline, . - thread_entry_trampoline

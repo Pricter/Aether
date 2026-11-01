@@ -1,55 +1,57 @@
-/**
- * memory.c: Memory functions, GCC and Clang require the right to access these functions and MUST be defined
- */
-
+/* Freestanding byte operations required by the compiler and kernel callers. */
+#include <kernel/strings.h>
 #include <stdint.h>
-#include <stddef.h>
 
-void *memcpy(void *dest, const void *src, size_t n) {
-    uint8_t *pdest = (uint8_t *)dest;
-    const uint8_t *psrc = (const uint8_t *)src;
+/* Copy disjoint byte ranges; overlap requires memmove instead. */
+void *memcpy(void *destination, const void *source, size_t length) {
+    unsigned char *destination_bytes = destination;
+    const unsigned char *source_bytes = source;
 
-    for (size_t i = 0; i < n; i++) {
-        pdest[i] = psrc[i];
+    for (size_t byte_index = 0; byte_index < length; ++byte_index) {
+        destination_bytes[byte_index] = source_bytes[byte_index];
     }
 
-    return dest;
+    return destination;
 }
 
-void *memset(void *s, int c, size_t n) {
-    uint8_t *p = (uint8_t *)s;
+/* Fill exactly length bytes with the low byte of value. */
+void *memset(void *destination, int value, size_t length) {
+    unsigned char *destination_bytes = destination;
 
-    for (size_t i = 0; i < n; i++) {
-        p[i] = (uint8_t)c;
+    for (size_t byte_index = 0; byte_index < length; ++byte_index) {
+        destination_bytes[byte_index] = (unsigned char)value;
     }
 
-    return s;
+    return destination;
 }
 
-void *memmove(void *dest, const void *src, size_t n) {
-    uint8_t *pdest = (uint8_t *)dest;
-    const uint8_t *psrc = (const uint8_t *)src;
+/* Choose copy direction by address so overlapping ranges retain source bytes.
+ * Integer address comparisons also avoid ordering unrelated C object pointers. */
+void *memmove(void *destination, const void *source, size_t length) {
+    unsigned char *destination_bytes = destination;
+    const unsigned char *source_bytes = source;
 
-    if (src > dest) {
-        for (size_t i = 0; i < n; i++) {
-            pdest[i] = psrc[i];
+    if ((uintptr_t)destination < (uintptr_t)source) {
+        for (size_t byte_index = 0; byte_index < length; ++byte_index) {
+            destination_bytes[byte_index] = source_bytes[byte_index];
         }
-    } else if (src < dest) {
-        for (size_t i = n; i > 0; i--) {
-            pdest[i-1] = psrc[i-1];
+    } else if ((uintptr_t)destination > (uintptr_t)source) {
+        for (size_t remaining = length; remaining; --remaining) {
+            destination_bytes[remaining - 1] = source_bytes[remaining - 1];
         }
     }
 
-    return dest;
+    return destination;
 }
 
-int memcmp(const void *s1, const void *s2, size_t n) {
-    const uint8_t *p1 = (const uint8_t *)s1;
-    const uint8_t *p2 = (const uint8_t *)s2;
+/* Compare unsigned bytes without reading beyond either supplied range. */
+int memcmp(const void *left, const void *right, size_t length) {
+    const unsigned char *left_bytes = left;
+    const unsigned char *right_bytes = right;
 
-    for (size_t i = 0; i < n; i++) {
-        if (p1[i] != p2[i]) {
-            return p1[i] < p2[i] ? -1 : 1;
+    for (size_t byte_index = 0; byte_index < length; ++byte_index) {
+        if (left_bytes[byte_index] != right_bytes[byte_index]) {
+            return left_bytes[byte_index] < right_bytes[byte_index] ? -1 : 1;
         }
     }
 

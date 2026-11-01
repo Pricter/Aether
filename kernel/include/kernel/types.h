@@ -18,14 +18,14 @@
 
 /* -- Identity types ---------------------------------------------------- */
 
-typedef int32_t  pid_t;     /* process identifier; -1 = invalid            */
-typedef int32_t  tid_t;     /* thread identifier;  -1 = invalid            */
-typedef uint32_t cpu_id_t;  /* LAPIC / logical CPU identifier              */
+typedef int32_t pid_t;     /* process identifier; -1 = invalid            */
+typedef int32_t tid_t;     /* thread identifier;  -1 = invalid            */
+typedef uint32_t cpu_id_t; /* logical CPU identifier              */
 
 /* -- Address types ----------------------------------------------------- */
 
-typedef uintptr_t vaddr_t;  /* kernel or user virtual address              */
-typedef uintptr_t paddr_t;  /* physical frame address (never add HHDM)     */
+typedef uintptr_t vaddr_t; /* kernel or user virtual address              */
+typedef uintptr_t paddr_t; /* physical frame address (no implicit virtual offset)     */
 
 /* -- Error type -------------------------------------------------------- */
 
@@ -37,35 +37,39 @@ typedef uintptr_t paddr_t;  /* physical frame address (never add HHDM)     */
  */
 typedef int errno_t;
 
-#define EOK      0   /* success                                            */
-#define EPERM    1   /* operation not permitted                            */
-#define ENOENT   2   /* no such file or directory                          */
-#define EBADF    9   /* bad file descriptor                                */
-#define ESRCH    3   /* no such process                                    */
-#define EINTR    4   /* interrupted system call                            */
-#define EFAULT  14   /* bad address                                        */
-#define EBUSY   16   /* device or resource busy                            */
-#define EINVAL  22   /* invalid argument                                   */
-#define ENOMEM  12   /* out of memory                                      */
-#define ENOSYS  38   /* function not implemented                           */
-#define EDEADLK 35   /* resource deadlock would occur                      */
-#define ENOTTY  25   /* inappropriate ioctl for device                     */
-#define ENOTSUP 95   /* operation not supported                            */
-#define EEXIST  17   /* file exists                                        */
-#define ENOTDIR 20   /* not a directory                                    */
-#define EISDIR  21   /* is a directory                                     */
-#define EMFILE  24   /* too many open files                                */
-#define ENOSPC  28   /* no space left on device                            */
-#define EROFS   30   /* read-only filesystem                               */
-#define ENAMETOOLONG 36  /* filename too long                              */
-#define ENOTEMPTY    39  /* directory not empty                            */
-#define EOVERFLOW    75  /* value too large                                */
-#define EPIPE        32  /* broken pipe                                    */
-#define ERANGE       34  /* result too large                               */
+#define EAGAIN 11       /* nonblocking operation would block */
+#define ECHILD 10       /* no matching child process */
+#define EXDEV 18        /* cross-filesystem operation */
+#define ESPIPE 29       /* nonseekable stream */
+#define EOK 0           /* success                                            */
+#define EPERM 1         /* operation not permitted                            */
+#define ENOENT 2        /* no such file or directory                          */
+#define EBADF 9         /* bad file descriptor                                */
+#define ESRCH 3         /* no such process                                    */
+#define EINTR 4         /* interrupted system call                            */
+#define EFAULT 14       /* bad address                                        */
+#define EBUSY 16        /* device or resource busy                            */
+#define EINVAL 22       /* invalid argument                                   */
+#define ENOMEM 12       /* out of memory                                      */
+#define ENOSYS 38       /* function not implemented                           */
+#define EDEADLK 35      /* resource deadlock would occur                      */
+#define ENOTTY 25       /* inappropriate ioctl for device                     */
+#define ENOTSUP 95      /* operation not supported                            */
+#define EEXIST 17       /* file exists                                        */
+#define ENOTDIR 20      /* not a directory                                    */
+#define EISDIR 21       /* is a directory                                     */
+#define EMFILE 24       /* too many open files                                */
+#define ENOSPC 28       /* no space left on device                            */
+#define EROFS 30        /* read-only filesystem                               */
+#define ENAMETOOLONG 36 /* filename too long                              */
+#define ENOTEMPTY 39    /* directory not empty                            */
+#define EOVERFLOW 75    /* value too large                                */
+#define EPIPE 32        /* broken pipe                                    */
+#define ERANGE 34       /* result too large                               */
 
 /* -- Path limit -------------------------------------------------------- */
 
-#define PATH_MAX 512   /* maximum absolute path length including NUL      */
+#define PATH_MAX 512 /* maximum absolute path length including NUL      */
 
 /* -- IRQ state --------------------------------------------------------- */
 

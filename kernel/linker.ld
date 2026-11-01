@@ -1,61 +1,46 @@
-OUTPUT_FORMAT(elf64-x86-64)
-OUTPUT_ARCH(i386:x86-64)
-
-ENTRY(_start)
+OUTPUT_FORMAT(elf64-littleaarch64)
+OUTPUT_ARCH(aarch64)
+ENTRY(arm64_boot)
 
 PHDRS
 {
-    text    PT_LOAD    FLAGS((1 << 0) | (1 << 2)) ; /* Execute + Read */
-    rodata  PT_LOAD    FLAGS((1 << 2)) ;            /* Read only */
-    data    PT_LOAD    FLAGS((1 << 1) | (1 << 2)) ; /* Write + Read */
+    text PT_LOAD FLAGS(5);
+    data PT_LOAD FLAGS(6);
 }
 
 SECTIONS
 {
-    . = 0xffffffff80000000;
- 
-    /* Align .init sections to 0x1000 */
-	text_start = .;
-    .init ALIGN(0x1000) :
-    {
-        *(.init .init.*)
-    } :text
- 
+    /* QEMU virt RAM starts at 0x40000000. Leave its first 512 KiB free
+     * for a future explicit device-tree handoff before this image. */
+    . = 0x40080000;
+    __image_start = .;
     .text : {
-        *(.text)
+        __text_start = .;
+        KEEP(*(.text.boot)) *(.text .text.*)
+        . = ALIGN(4096);
+        __text_end = .;
     } :text
-    text_end = .;
- 
-    . = ALIGN(0x1000);
- 
-    rodata_start = .;
-    .rodata : {
+    .rodata ALIGN(4096) : {
+        __rodata_start = .;
         *(.rodata .rodata.*)
-    } :rodata
-
-    /* Kernel test registry - auto-discovered by ktest runner */
-    .ktest ALIGN(8) : {
-        PROVIDE_HIDDEN(__ktest_start = .);
-        *(.ktest)
-        PROVIDE_HIDDEN(__ktest_end = .);
-    } :rodata
-    rodata_end = .;
- 
-    . = ALIGN(0x1000);
- 
-    data_start = .;
-    .data : {
-        *(.data)
+        . = ALIGN(4096);
+        __rodata_end = .;
+    } :text
+    .data ALIGN(4096) : { *(.data .data.*) } :data
+    .bss ALIGN(64) (NOLOAD) : {
+        __bss_start = .;
+        *(.bss .bss.*) *(COMMON)
+        . = ALIGN(16);
+        __bss_end = .;
     } :data
- 
-    .bss : {
-        *(COMMON)
-        *(.bss)
+    . = ALIGN(4096);
+    __kernel_end = .;
+    .stack ALIGN(4096) (NOLOAD) : {
+        __stack_bottom = .;
+        . += 16384;
+        __stack_top = .;
     } :data
-    data_end = .;
- 
-    /DISCARD/ : {
-        *(.eh_frame)
-        *(.note .note.*)
-    }
+    __image_end = .;
+    __image_size = __image_end - __image_start;
+    /DISCARD/ : { *(.comment) *(.eh_frame*) *(.note*) }
 }

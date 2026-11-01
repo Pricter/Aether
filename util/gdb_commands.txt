@@ -1,4 +1,4 @@
+file build/kernel/kernel.elf
 target remote localhost:1234
-add-symbol-file kernel/kernel.elf
 layout src
 layout regs

@@ -1,400 +1,498 @@
-/*
- * scheduler.c - round-robin preemptive per-core scheduler
- *
- * Each logical CPU owns a run queue (list_head_t + spinlock_t embedded in
- * core_t).  The LAPIC timer drives preemption via a tick hook installed by
- * the caller after scheduler_init().  Each core also has a dedicated idle
- * thread (never on any run queue) that runs when no runnable work exists.
- *
- * A global reaper thread (running on whatever core picks it up) drains the
- * dead_list and frees the kernel stack and thread_t for exited threads.
- *
- * Lock ordering (outermost -> innermost):
- *   process_t.lock
- *     -> thread_t.lock
- *       -> wait_queue_t.lock   \  (never both held simultaneously)
- *       -> dead_list_lock      /
- *         -> run_queue_lock
- *
- * Within schedule() the run_queue_lock protects all state mutations for
- * threads on this core's run queue.  thread_t.lock is acquired separately
- * and released before run_queue_lock is taken (never nested).
- */
+/* ARM SMP scheduler. One short state lock serializes lifecycle transitions and
+ * per-CPU queue ownership. It is NEVER held across a physical context switch.
+ * Frames/heap/process locks are acquired only outside this state lock.
+ * A saved context becomes publishable from scheduler_switch_complete, running
+ * on the incoming stack. This is the off-CPU handoff for wakeups and reaping. */
 
+#include <kernel/userspace.h>
 #include <kernel/scheduler.h>
 #include <kernel/cpu.h>
-#include <kernel/apic.h>
+#include <kernel/heap.h>
 #include <kernel/panic.h>
-#include <kernel/mmu.h>
-#include <kernel/kprintf.h>
-#include <stdint.h>
-#include <stddef.h>
+#include <kernel/smp.h>
+#include <platform/serial.h>
 
-/* asm stubs in sys/switch.S */
 extern void context_switch(context_regs_t *outgoing, context_regs_t *incoming);
 extern void context_enter(context_regs_t *incoming);
 extern void thread_entry_trampoline(void);
-extern void user_thread_trampoline(void);
 
-/* Atomic ID allocators */
-static _Atomic int32_t next_tid = 1;
-static _Atomic int32_t next_pid = 1;
+process_t kernel_process;
+static spinlock_t scheduler_state_lock = SPINLOCK_ZERO;
+static list_head_t dead_list;
+static wait_queue_t reaper_queue;
+static thread_t *reaper_thread;
+static int32_t next_thread_id = 1;
+static int32_t next_process_id = 1;
+static unsigned long reaped_threads;
+static unsigned long context_switch_count;
+static unsigned long timer_switch_count;
+static unsigned long idle_entry_count;
+static unsigned long deferred_wake_count;
 
-pid_t scheduler_alloc_pid(void) {
-    return (pid_t)__atomic_fetch_add(&next_pid, 1, __ATOMIC_RELAXED);
+_Static_assert(__builtin_offsetof(context_regs_t, stack_pointer) == 96, "ARM switch SP offset");
+_Static_assert(__builtin_offsetof(context_regs_t, simd_registers) == 112, "ARM SIMD offset");
+_Static_assert(sizeof(context_regs_t) == 640, "ARM switch context size");
+
+/* All queue operations below require the sole scheduler-state lock. */
+static void enqueue_ready_locked(thread_t *thread) {
+    KERNEL_ASSERT(thread->state == THREAD_READY && !thread->on_cpu);
+    KERNEL_ASSERT(thread->list_node.next == &thread->list_node);
+
+    core_t *target = &cpu_core_local[thread->owner_cpu];
+    list_push_back(&target->run_queue, &thread->list_node);
+    __atomic_store_n(&target->reschedule_pending, true, __ATOMIC_RELEASE);
+
+    if (thread->owner_cpu != this_cpu()->cpu_id || target->current_thread == target->idle_thread) {
+        arm64_scheduler_notify(thread->owner_cpu);
+    }
 }
 
-/* Global kernel process */
-process_t kernel_process;
+/* A remote wake may precede the outgoing context save. Mark it ready, but
+ * leave enqueueing to the incoming CPU's completion hook until on_cpu clears. */
+static void wake_thread_locked(thread_t *thread) {
+    KERNEL_ASSERT(thread->state == THREAD_BLOCKED);
+    thread->state = THREAD_READY;
 
-/* ------------------------------------------------------------------ */
-/* Dead list and reaper                                                 */
-/* ------------------------------------------------------------------ */
+    if (!thread->on_cpu) {
+        enqueue_ready_locked(thread);
+    } else {
+        __atomic_fetch_add(&deferred_wake_count, 1, __ATOMIC_RELAXED);
+    }
+}
 
-static list_head_t  dead_list;
-static spinlock_t   dead_list_lock;
-static wait_queue_t reaper_wq;
-static thread_t    *reaper_thread;
+/* Remove queue membership under the same state lock as BLOCKED publication. */
+static void wake_one_locked(wait_queue_t *queue) {
+    list_node_t *node = list_pop_front(&queue->waiters);
 
-static void idle_fn(void) {
+    if (node) {
+        wake_thread_locked(list_entry(node, thread_t, wq_node));
+    }
+}
+
+/* Complete on the INCOMING stack with IRQs off. Before this point no waker,
+ * remote CPU, or reaper may consume the outgoing context/stack. */
+void scheduler_switch_complete(void) {
+    core_t *cpu = this_cpu();
+    thread_t *previous = cpu->switch_previous;
+
+    if (!previous) {
+        return;
+    }
+
+    KERNEL_ASSERT(!kernel_interrupt_depth() && !kernel_spinlock_depth());
+    spinlock_acquire(&scheduler_state_lock);
+    KERNEL_ASSERT(previous->on_cpu && previous != cpu->current_thread);
+    previous->on_cpu = false;
+    cpu->switch_previous = NULL;
+
+    if (previous == cpu->idle_thread) {
+        previous->state = THREAD_READY;
+    } else if (previous->state == THREAD_READY) {
+        enqueue_ready_locked(previous);
+    } else if (previous->state == THREAD_DEAD) {
+        list_push_back(&dead_list, &previous->list_node);
+        wake_one_locked(&reaper_queue);
+    } else {
+        KERNEL_ASSERT(previous->state == THREAD_BLOCKED);
+    }
+
+    /* previous may be freed immediately by CPU 0 after this release. */
+    spinlock_release(&scheduler_state_lock, false);
+}
+
+/* Pick only an off-CPU context. The old runnable context is enqueued later,
+ * after assembly has saved it and moved SP, closing the cross-core race. */
+static void switch_locked(bool restore_interrupts) {
+    core_t *cpu = this_cpu();
+    thread_t *current = cpu->current_thread;
+    list_node_t *node = list_pop_front(&cpu->run_queue);
+    thread_t *next = node ? list_entry(node, thread_t, list_node) : NULL;
+    bool runnable = current && current != cpu->idle_thread && current->state == THREAD_RUNNING;
+
+    if (!next && (runnable || current == cpu->idle_thread)) {
+        spinlock_release(&scheduler_state_lock, false);
+        irq_restore(restore_interrupts);
+
+        return;
+    }
+
+    if (!next) {
+        next = cpu->idle_thread;
+    }
+
+    KERNEL_ASSERT(next && next != current && !next->on_cpu && next->owner_cpu == cpu->cpu_id);
+
+    if (runnable) {
+        current->state = THREAD_READY;
+    }
+
+    next->state = THREAD_RUNNING;
+    next->on_cpu = true;
+    cpu->current_thread = next;
+    cpu->switch_previous = current;
+    __atomic_fetch_add(&context_switch_count, 1, __ATOMIC_RELAXED);
+
+    if (cpu->preemption_switch) {
+        __atomic_fetch_add(&timer_switch_count, 1, __ATOMIC_RELAXED);
+        cpu->preemption_switch = false;
+    }
+
+    spinlock_release(&scheduler_state_lock, false);
+#ifdef ARM64_TEST_HANDOFF
+    extern void arm64_test_handoff_pause(thread_t * outgoing);
+    arm64_test_handoff_pause(current);
+#endif
+
+    arm64_process_switch(current, next);
+    context_switch(&current->context, &next->context);
+    irq_restore(restore_interrupts);
+}
+
+/* Publish BLOCKED and list membership while producers cannot pass the state
+ * lock. No external predicate/condition lock survives the actual switch. */
+static void block_locked(wait_queue_t *queue, bool restore_interrupts) {
+    thread_t *current = this_cpu()->current_thread;
+    KERNEL_ASSERT(
+        current && current != this_cpu()->idle_thread && current->state == THREAD_RUNNING);
+    KERNEL_ASSERT(current->wq_node.next == &current->wq_node);
+
+    current->state = THREAD_BLOCKED;
+    list_push_back(&queue->waiters, &current->wq_node);
+    switch_locked(restore_interrupts);
+}
+
+/* Idle stacks are permanent, pinned, and never appear in any ready queue. */
+static void idle_entry(void) {
+    __atomic_fetch_add(&idle_entry_count, 1, __ATOMIC_RELAXED);
+
     for (;;) {
         enable_interrupts();
-        asm volatile("hlt");
+        __asm__ volatile("wfi");
     }
 }
 
-static void reaper_fn(void) {
+/* Only fully off-CPU DEAD threads reach dead_list. CPU 0 owns the reaper; its
+ * empty check and wait insertion use the same lock as exit notifications. */
+static void reaper_entry(void) {
     for (;;) {
-        list_head_t local;
-        list_head_init(&local);
+        bool saved_interrupts = irq_save();
+        spinlock_acquire(&scheduler_state_lock);
 
-        bool irq = spinlock_acquire(&dead_list_lock);
-        list_node_t *n;
-        while ((n = list_pop_front(&dead_list)) != NULL)
-            list_push_back(&local, n);
-        spinlock_release(&dead_list_lock, irq);
+        list_node_t *node = list_pop_front(&dead_list);
 
-        while ((n = list_pop_front(&local)) != NULL) {
-            thread_t  *t    = list_entry(n, thread_t, list_node);
-            process_t *proc = t->parent;
-            kstack_free(t->kstack_top);
-            free(t);
-
-            if (proc) {
-                bool pirq = spinlock_acquire(&proc->lock);
-                bool last = (--proc->thread_count == 0);
-                spinlock_release(&proc->lock, pirq);
-                if (last && proc != &kernel_process)
-                    process_destroy(proc);
-            }
+        if (!node) {
+            block_locked(&reaper_queue, saved_interrupts);
+            continue;
         }
 
-        thread_block(&reaper_wq);
+        thread_t *finished = list_entry(node, thread_t, list_node);
+        KERNEL_ASSERT(!finished->on_cpu && finished->state == THREAD_DEAD);
+
+        process_t *parent = finished->parent;
+        spinlock_release(&scheduler_state_lock, false);
+        irq_restore(saved_interrupts);
+
+        kstack_free(finished->kstack_top);
+        free(finished);
+
+        bool parent_interrupts = spinlock_acquire(&parent->lock);
+        KERNEL_ASSERT(parent->thread_count);
+
+        bool managed_process = parent->managed_process;
+        --parent->thread_count;
+        spinlock_release(&parent->lock, parent_interrupts);
+
+        __atomic_fetch_add(&reaped_threads, 1, __ATOMIC_RELEASE);
+
+        /* Unmanaged owners may destroy parent after observing zero threads.
+         * Managed processes remain owned by the process tree until wait. */
+        if (managed_process) {
+            arm64_process_thread_reaped(parent);
+        }
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Scheduler init                                                       */
-/* ------------------------------------------------------------------ */
+/* IDs are independent of CPU affinity and assigned by explicit atomics. */
+pid_t scheduler_alloc_pid(void) {
+    return __atomic_fetch_add(&next_process_id, 1, __ATOMIC_RELAXED);
+}
 
+/* Build all per-CPU idle contexts before any PSCI secondary is started. */
 void scheduler_init(void) {
-    kernel_process.pid          = scheduler_alloc_pid();
-    kernel_process.name         = "kernel";
-    kernel_process.pagemap      = NULL;
-    kernel_process.lock         = (spinlock_t)SPINLOCK_ZERO;
-    list_head_init(&kernel_process.threads);
-    kernel_process.thread_count = 0;
-    list_head_init(&kernel_process.vma_list);
-    kernel_process.mmap_base    = 0;
+    arm64_user_initialize();
+    KERNEL_ASSERT(this_cpu()->cpu_id == 0 && !this_cpu()->current_thread);
+
+    kernel_process.pid = scheduler_alloc_pid();
+    kernel_process.name = "kernel";
+    list_head_init(&kernel_process.children);
+    wait_queue_init(&kernel_process.child_wait);
 
     list_head_init(&dead_list);
-    dead_list_lock = (spinlock_t)SPINLOCK_ZERO;
-    wait_queue_init(&reaper_wq);
+    wait_queue_init(&reaper_queue);
 
-    for (uint64_t i = 0; i < coreCount; i++) {
-        list_head_init(&cpu_core_local[i].run_queue);
-        cpu_core_local[i].run_queue_lock = (spinlock_t)SPINLOCK_ZERO;
+    for (unsigned int cpu_index = 0; cpu_index < coreCount; ++cpu_index) {
+        list_head_init(&cpu_core_local[cpu_index].run_queue);
 
-        thread_t *idle = thread_create(&kernel_process, idle_fn);
+        thread_t *idle = thread_create(&kernel_process, idle_entry);
         KERNEL_ASSERT(idle != NULL);
-        cpu_core_local[i].idle_thread = idle;
-        /* idle is never enqueued; schedule() switches to it explicitly */
+        idle->owner_cpu = cpu_index;
+        cpu_core_local[cpu_index].idle_thread = idle;
     }
 
-    /* Reaper: create but do NOT enqueue yet.  The caller must call
-     * scheduler_start_reaper() once all other threads are populated so that
-     * per-core run queues are empty immediately after scheduler_init(). */
-    reaper_thread = thread_create(&kernel_process, reaper_fn);
+    reaper_thread = thread_create(&kernel_process, reaper_entry);
     KERNEL_ASSERT(reaper_thread != NULL);
-
-    KINFO("sched", "Initialized (%lu cores)", coreCount);
+    platform_serial_write("ARM64 scheduler initialized (CPU 0)\n");
 }
 
+/* Start the one global reaper on CPU 0, never on the CPU issuing a wake. */
 void scheduler_start_reaper(void) {
-    KERNEL_ASSERT(reaper_thread != NULL);
     thread_ready_on(reaper_thread, 0);
 }
 
-/* ------------------------------------------------------------------ */
-/* Thread lifecycle                                                     */
-/* ------------------------------------------------------------------ */
-
+/* Caller owns CREATED; publication transfers ownership to scheduler/reaper. */
 thread_t *thread_create(process_t *parent, void (*entry)(void)) {
-    thread_t *t = malloc(sizeof(thread_t));
-    if (!t) return NULL;
+    KERNEL_ASSERT(!kernel_interrupt_depth() && !kernel_spinlock_depth());
 
-    uintptr_t stack_top = kstack_alloc();
-    if (!stack_top) {
-        free(t);
+    if (!parent || !entry) {
         return NULL;
     }
 
-    t->tid           = __atomic_fetch_add(&next_tid, 1, __ATOMIC_RELAXED);
-    t->parent        = parent;
-    t->state         = THREAD_CREATED;
-    t->lock          = (spinlock_t)SPINLOCK_ZERO;
-    t->kstack_top    = stack_top;
-    t->kstack_bottom = stack_top - KSTACK_SIZE;
-    t->ustack_top    = 0;           /* kernel thread; set by caller for user threads */
-    list_node_init(&t->list_node);
-    list_node_init(&t->wq_node);
+    thread_t *thread = malloc(sizeof(*thread));
 
-    bool pirq = spinlock_acquire(&parent->lock);
-    parent->thread_count++;
-    spinlock_release(&parent->lock, pirq);
-
-    /*
-     * Initial context for first execution:
-     *   rip -> thread_entry_trampoline  (enables interrupts, calls entry)
-     *   rsp -> stack_top                (16-byte aligned; no return addr yet)
-     *   r12 -> entry                    (trampoline reads r12 for the target)
-     *
-     * Callee-saved registers other than r12 are zeroed.
-     */
-    t->context.rip = (uintptr_t)thread_entry_trampoline;
-    t->context.rsp = stack_top;
-    t->context.rbx = 0;
-    t->context.rbp = 0;
-    t->context.r12 = (uintptr_t)entry;
-    t->context.r13 = 0;
-    t->context.r14 = 0;
-    t->context.r15 = 0;
-
-    return t;
-}
-
-thread_t *thread_create_user(process_t *proc, uintptr_t entry, uintptr_t usp) {
-    thread_t *t = thread_create(proc, NULL);
-    if (!t) return NULL;
-
-    t->ustack_top  = usp;
-    /* user_thread_trampoline reads these from the restored callee-saved regs:
-     *   r12 = user entry point
-     *   r13 = user RSP
-     *   r14 = CR3 value (pagemap physical address = pagemap_virt - HHDM) */
-    t->context.rip = (uintptr_t)user_thread_trampoline;
-    t->context.r12 = entry;
-    t->context.r13 = usp;
-    t->context.r14 = (uintptr_t)proc->pagemap - HHDM_HIGHER_HALF;
-    return t;
-}
-
-void thread_ready_on(thread_t *t, cpu_id_t core_id) {
-    KERNEL_ASSERT(core_id < (cpu_id_t)coreCount);
-    core_t *cpu = &cpu_core_local[core_id];
-
-    /* State transition under thread lock; released before touching queue */
-    bool tirq = spinlock_acquire(&t->lock);
-    KERNEL_ASSERT(t->state == THREAD_CREATED || t->state == THREAD_BLOCKED);
-    t->state = THREAD_READY;
-    spinlock_release(&t->lock, tirq);
-
-    bool rirq = spinlock_acquire(&cpu->run_queue_lock);
-    list_push_back(&cpu->run_queue, &t->list_node);
-    spinlock_release(&cpu->run_queue_lock, rirq);
-}
-
-void thread_ready(thread_t *t) {
-    thread_ready_on(t, this_cpu()->cpu_id);
-}
-
-/* ------------------------------------------------------------------ */
-/* Scheduler entry                                                      */
-/* ------------------------------------------------------------------ */
-
-void __attribute__((noreturn)) scheduler_enter(void) {
-    core_t   *cpu  = this_cpu();
-    thread_t *idle = cpu->idle_thread;
-
-    bool irq = spinlock_acquire(&cpu->run_queue_lock);
-    list_node_t *node = list_pop_front(&cpu->run_queue);
-
-    if (!node) {
-        /*
-         * Run queue empty: LAPIC already fired and schedule() performed the
-         * first context switch on this core.  Fall back to idle; the tick
-         * hook drives scheduling from here.
-         */
-        KERNEL_ASSERT(idle != NULL);
-        idle->state         = THREAD_RUNNING;
-        cpu->current_thread = idle;
-        cpu->tss.rsp0       = idle->kstack_top;
-        cpu->syscall_ksp    = idle->kstack_top;
-        spinlock_release(&cpu->run_queue_lock, false); /* keep IRQs off until trampoline sti */
-
-        context_enter(&idle->context);
-        __builtin_unreachable();
+    if (!thread) {
+        return NULL;
     }
 
-    thread_t *first     = list_entry(node, thread_t, list_node);
-    first->state        = THREAD_RUNNING;
+    uintptr_t stack_top = kstack_alloc();
+
+    if (!stack_top) {
+        free(thread);
+
+        return NULL;
+    }
+
+    thread->tid = __atomic_fetch_add(&next_thread_id, 1, __ATOMIC_RELAXED);
+    thread->parent = parent;
+    thread->state = THREAD_CREATED;
+    thread->owner_cpu = this_cpu()->cpu_id;
+    thread->kstack_top = stack_top;
+    thread->kstack_bottom = stack_top - KSTACK_SIZE;
+
+    thread->context.saved_registers[0] = (uintptr_t)entry;
+    thread->context.saved_registers[11] = (uintptr_t)thread_entry_trampoline;
+    thread->context.stack_pointer = stack_top;
+
+    list_node_init(&thread->list_node);
+    list_node_init(&thread->wq_node);
+
+    bool saved_interrupts = spinlock_acquire(&parent->lock);
+    ++parent->thread_count;
+    spinlock_release(&parent->lock, saved_interrupts);
+
+    return thread;
+}
+
+/* Validate both endpoints before publishing a fresh EL0 context. */
+thread_t *thread_create_user(process_t *process, uintptr_t entry, uintptr_t stack_top) {
+    if (!arm64_user_access(process, entry, PROT_EXEC) || !stack_top || (stack_top & 15) ||
+        !arm64_user_access(process, stack_top - 1, PROT_WRITE)) {
+        return NULL;
+    }
+
+    thread_t *thread = thread_create(process, arm64_user_thread_start);
+
+    if (thread) {
+        thread->user_entry = entry;
+        thread->ustack_top = stack_top;
+    }
+
+    return thread;
+}
+
+/* Unpublished contexts are not reachable by another CPU or the reaper. */
+void thread_destroy(thread_t *thread) {
+    if (!thread) {
+        return;
+    }
+
+    KERNEL_ASSERT(!kernel_interrupt_depth() && !kernel_spinlock_depth());
+
+    bool saved_interrupts = spinlock_acquire(&scheduler_state_lock);
+    KERNEL_ASSERT(thread->state == THREAD_CREATED && !thread->on_cpu);
+    thread->state = THREAD_DEAD;
+    spinlock_release(&scheduler_state_lock, saved_interrupts);
+
+    process_t *parent = thread->parent;
+    saved_interrupts = spinlock_acquire(&parent->lock);
+    --parent->thread_count;
+    spinlock_release(&parent->lock, saved_interrupts);
+    kstack_free(thread->kstack_top);
+    free(thread);
+}
+
+/* Explicit affinity assignment is permitted only before publication. */
+void thread_ready_on(thread_t *thread, cpu_id_t core_id) {
+    KERNEL_ASSERT(core_id < coreCount);
+
+    bool saved_interrupts = spinlock_acquire(&scheduler_state_lock);
+    KERNEL_ASSERT(thread->state == THREAD_CREATED && !thread->on_cpu);
+    thread->owner_cpu = core_id;
+    thread->state = THREAD_READY;
+    enqueue_ready_locked(thread);
+    spinlock_release(&scheduler_state_lock, saved_interrupts);
+}
+
+/* New threads default to the producer's CPU; wakeups use retained affinity. */
+void thread_ready(thread_t *thread) {
+    thread_ready_on(thread, this_cpu()->cpu_id);
+}
+
+/* First entry needs no outgoing context; completion sees switch_previous NULL. */
+__attribute__((noreturn)) void scheduler_enter(void) {
+    KERNEL_ASSERT(!kernel_interrupt_depth() && !kernel_spinlock_depth());
+    irq_save();
+
+    core_t *cpu = this_cpu();
+    KERNEL_ASSERT(!cpu->current_thread);
+    spinlock_acquire(&scheduler_state_lock);
+
+    list_node_t *node = list_pop_front(&cpu->run_queue);
+    thread_t *first = node ? list_entry(node, thread_t, list_node) : cpu->idle_thread;
+    KERNEL_ASSERT(first && !first->on_cpu);
+    first->state = THREAD_RUNNING;
+    first->on_cpu = true;
     cpu->current_thread = first;
-    cpu->tss.rsp0       = first->kstack_top;
-    cpu->syscall_ksp    = first->kstack_top;
-
-    spinlock_release(&cpu->run_queue_lock, false); /* keep IRQs off until trampoline sti */
-
+    spinlock_release(&scheduler_state_lock, false);
+    arm64_process_switch(NULL, first);
     context_enter(&first->context);
     __builtin_unreachable();
 }
 
-/* ------------------------------------------------------------------ */
-/* Round-robin scheduler                                                */
-/* ------------------------------------------------------------------ */
-
+/* Normal yield or IRQ-tail preemption; no lock or live IRQ may cross switch. */
 void schedule(void) {
-    core_t   *cpu     = this_cpu();
-    thread_t *current = cpu->current_thread;
-    thread_t *idle    = cpu->idle_thread;
+    KERNEL_ASSERT(!kernel_interrupt_depth() && !kernel_spinlock_depth());
 
-    /* Guard: scheduler_init() hasn't run yet (no idle thread) */
-    if (!idle) return;
-
-    bool irq = spinlock_acquire(&cpu->run_queue_lock);
-
-    bool is_idle  = (current == idle);
-    bool runnable = !is_idle && current != NULL
-                    && current->state == THREAD_RUNNING;
-
-    thread_t *next = NULL;
-    if (!list_empty(&cpu->run_queue)) {
-        list_node_t *node = list_pop_front(&cpu->run_queue);
-        next = list_entry(node, thread_t, list_node);
+    if (!this_cpu()->current_thread) {
+        return;
     }
 
-    if (!next) {
-        if (runnable || is_idle) {
-            /* Nothing else ready: keep running current (or stay idle) */
-            spinlock_release(&cpu->run_queue_lock, irq);
+    bool saved_interrupts = irq_save();
+    spinlock_acquire(&scheduler_state_lock);
+    switch_locked(saved_interrupts);
+}
+
+/* Unconditional wait; use thread_wait_until when a producer updates a condition. */
+void thread_block(wait_queue_t *queue) {
+    KERNEL_ASSERT(!kernel_interrupt_depth() && !kernel_spinlock_depth());
+
+    bool saved_interrupts = irq_save();
+    spinlock_acquire(&scheduler_state_lock);
+    block_locked(queue, saved_interrupts);
+}
+
+/* Check and insertion share the state lock with wakeups. Producers publish
+ * condition data before waking; predicates may not acquire locks or allocate. */
+void thread_wait_until(wait_queue_t *queue, bool (*ready)(void *context), void *context) {
+    KERNEL_ASSERT(ready && !kernel_interrupt_depth() && !kernel_spinlock_depth());
+
+    bool saved_interrupts = irq_save();
+
+    for (;;) {
+        spinlock_acquire(&scheduler_state_lock);
+
+        if (ready(context)) {
+            spinlock_release(&scheduler_state_lock, false);
+            irq_restore(saved_interrupts);
+
             return;
         }
-        /* Current is blocked or dead with an empty queue: fall to idle */
-        next = idle;
-    } else if (runnable) {
-        /* Re-enqueue current at back of queue (round-robin) */
-        current->state = THREAD_READY;
-        list_push_back(&cpu->run_queue, &current->list_node);
-    }
-    /* If blocked/dead and next exists: just switch, don't re-enqueue */
 
-    next->state         = THREAD_RUNNING;
-    cpu->current_thread = next;
-    cpu->tss.rsp0       = next->kstack_top;   /* ring-3 -> ring-0 stack */
-    cpu->syscall_ksp    = next->kstack_top;
-
-    spinlock_release(&cpu->run_queue_lock, false); /* keep IRQs off across context switch */
-
-    if (current != NULL) {
-        context_switch(&current->context, &next->context);
-        irq_restore(irq); /* restore caller's IRQ state when this thread resumes */
-    } else {
-        context_enter(&next->context); /* noreturn; trampoline does sti */
+        block_locked(queue, false);
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Thread block / exit                                                  */
-/* ------------------------------------------------------------------ */
+/* Exit is not visible to reaping until the completion hook switches stacks. */
+__attribute__((noreturn)) void thread_exit(void) {
+    KERNEL_ASSERT(!kernel_interrupt_depth() && !kernel_spinlock_depth());
+    irq_save();
+    spinlock_acquire(&scheduler_state_lock);
 
-void thread_block(wait_queue_t *wq) {
-    core_t   *cpu = this_cpu();
-    thread_t *t   = cpu->current_thread;
+    thread_t *current = this_cpu()->current_thread;
+    KERNEL_ASSERT(current && current != this_cpu()->idle_thread);
+    current->state = THREAD_DEAD;
+    switch_locked(false);
+    KERNEL_BUG("exited thread resumed");
+}
 
-    KERNEL_ASSERT(t != NULL);
-    KERNEL_ASSERT(t != cpu->idle_thread);
+/* Wake operations are IRQ-safe and never allocate or hold external locks. */
+void wait_queue_wake_one(wait_queue_t *queue) {
+    bool saved_interrupts = spinlock_acquire(&scheduler_state_lock);
+    wake_one_locked(queue);
+    spinlock_release(&scheduler_state_lock, saved_interrupts);
+}
 
-    bool tirq = spinlock_acquire(&t->lock);
-    KERNEL_ASSERT(t->state == THREAD_RUNNING);
-    t->state = THREAD_BLOCKED;
-    spinlock_release(&t->lock, tirq);
+/* Serialize the whole broadcast so each waiter is detached exactly once. */
+void wait_queue_wake_all(wait_queue_t *queue) {
+    bool saved_interrupts = spinlock_acquire(&scheduler_state_lock);
 
-    bool wirq = spinlock_acquire(&wq->lock);
-    list_push_back(&wq->waiters, &t->wq_node);
-    spinlock_release(&wq->lock, wirq);
+    while (!list_empty(&queue->waiters)) {
+        wake_one_locked(queue);
+    }
 
+    spinlock_release(&scheduler_state_lock, saved_interrupts);
+}
+
+/* Timer and IPI callbacks only request scheduling; dispatch completes EOI first. */
+void scheduler_timer_tick(void *context) {
+    (void)context;
+    __atomic_store_n(&this_cpu()->reschedule_pending, true, __ATOMIC_RELEASE);
+}
+
+/* An exchange preserves a concurrent new request instead of clearing it late. */
+void scheduler_interrupt_exit(void) {
+    core_t *cpu = this_cpu();
+
+    if (!cpu->current_thread ||
+        !__atomic_exchange_n(&cpu->reschedule_pending, false, __ATOMIC_ACQ_REL)) {
+        return;
+    }
+
+    cpu->preemption_switch = true;
     schedule();
-    /* Resumes here after wait_queue_wake_one/all transitions us to READY
-     * and a subsequent schedule() picks us back up. */
+    cpu->preemption_switch = false;
 }
 
-void __attribute__((noreturn)) thread_exit(void) {
-    core_t   *cpu   = this_cpu();
-    thread_t *dying = cpu->current_thread;
+/* Snapshot queue membership under its actual SMP owner, not the per-thread lock. */
+unsigned long scheduler_waiter_count(wait_queue_t *queue) {
+    bool saved_interrupts = spinlock_acquire(&scheduler_state_lock);
+    unsigned long count = 0;
 
-    KERNEL_ASSERT(dying != NULL);
-    KERNEL_ASSERT(dying != cpu->idle_thread);
-
-    /* Mark dead under thread lock */
-    bool tirq = spinlock_acquire(&dying->lock);
-    dying->state = THREAD_DEAD;
-    spinlock_release(&dying->lock, tirq);
-
-    /* Hand off to reaper */
-    bool dirq = spinlock_acquire(&dead_list_lock);
-    list_push_back(&dead_list, &dying->list_node);
-    spinlock_release(&dead_list_lock, dirq);
-
-    /* Wake reaper so it collects dying's stack and thread_t */
-    wait_queue_wake_one(&reaper_wq);
-
-    /* Switch away; schedule() sees THREAD_DEAD and will not re-enqueue */
-    schedule();
-
-    KERNEL_BUG("thread_exit: returned from schedule()");
-}
-
-/* ------------------------------------------------------------------ */
-/* Wait queue wake primitives                                           */
-/* ------------------------------------------------------------------ */
-
-void wait_queue_wake_one(wait_queue_t *wq) {
-    bool irq = spinlock_acquire(&wq->lock);
-    list_node_t *node = list_pop_front(&wq->waiters);
-    spinlock_release(&wq->lock, irq);
-
-    if (node) {
-        thread_t *t = list_entry(node, thread_t, wq_node);
-        thread_ready(t);
+    for (list_node_t *node = queue->waiters.next; node != &queue->waiters; node = node->next) {
+        ++count;
     }
+
+    spinlock_release(&scheduler_state_lock, saved_interrupts);
+
+    return count;
 }
 
-void wait_queue_wake_all(wait_queue_t *wq) {
-    /*
-     * Drain waiters while holding wq->lock, then enqueue each thread after
-     * the lock is released to avoid holding wq->lock and run_queue_lock
-     * simultaneously (lock ordering violation).
-     */
-    list_head_t local;
-    list_head_init(&local);
+/* Diagnostic counters publish no pointers into asynchronously reaped storage. */
+unsigned long scheduler_reaped_threads(void) {
+    return __atomic_load_n(&reaped_threads, __ATOMIC_ACQUIRE);
+}
 
-    bool irq = spinlock_acquire(&wq->lock);
-    list_node_t *node;
-    while ((node = list_pop_front(&wq->waiters)) != NULL)
-        list_push_back(&local, node);
-    spinlock_release(&wq->lock, irq);
+unsigned long scheduler_context_switches(void) {
+    return __atomic_load_n(&context_switch_count, __ATOMIC_RELAXED);
+}
 
-    while ((node = list_pop_front(&local)) != NULL) {
-        thread_t *t = list_entry(node, thread_t, wq_node);
-        thread_ready(t);
-    }
+unsigned long scheduler_timer_switches(void) {
+    return __atomic_load_n(&timer_switch_count, __ATOMIC_RELAXED);
+}
+
+unsigned long scheduler_idle_entries(void) {
+    return __atomic_load_n(&idle_entry_count, __ATOMIC_RELAXED);
+}
+
+unsigned long scheduler_deferred_wakeups(void) {
+    return __atomic_load_n(&deferred_wake_count, __ATOMIC_RELAXED);
 }

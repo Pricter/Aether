@@ -1,10 +1,7 @@
-#!/bin/bash
-
-VERSION=`git rev-parse --short HEAD`
-
-X=$(git status -s | grep -q '^.M')
-if [ $? -eq 0 ]; then
-    VERSION="$VERSION-dirty"
+#!/bin/sh
+# Print the current revision, including tracked or untracked working changes.
+revision=$(git rev-parse --short HEAD) || exit 1
+if [ -n "$(git status --porcelain)" ]; then
+    revision="$revision-dirty"
 fi
-
-echo -n $VERSION
+printf '%s' "$revision"

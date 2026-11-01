@@ -1,999 +1,227 @@
 # Aether Kernel Architecture
 
-This document describes the kernel as it **currently exists** in code.  
-It is the authoritative reference for invariants, ownership rules, concurrency contracts, and scheduler prerequisites.  
-The design philosophy and long-term goals live in [README.md](../README.md); this document maps that philosophy to actual implementation.
-
----
-
-## Table of Contents
-
-1. [System Map](#1-system-map)
-2. [Address Space Layout](#2-address-space-layout)
-3. [Subsystem Dependency Order](#3-subsystem-dependency-order)
-4. [Type System](#4-type-system)
-5. [Memory Subsystem](#5-memory-subsystem)
-6. [Concurrency Primitives](#6-concurrency-primitives)
-7. [Container Primitives](#7-container-primitives)
-8. [Hardware Abstraction Layer](#8-hardware-abstraction-layer)
-9. [SMP and Per-CPU Infrastructure](#9-smp-and-per-cpu-infrastructure)
-10. [Interrupt Handling](#10-interrupt-handling)
-11. [Time and Timer Foundation](#11-time-and-timer-foundation)
-12. [Execution Context Model](#12-execution-context-model)
-13. [Logging and Observability](#13-logging-and-observability)
-14. [Test Framework](#14-test-framework)
-15. [Concurrency Rules](#15-concurrency-rules)
-16. [Memory Ownership Rules](#16-memory-ownership-rules)
-17. [Scheduler Prerequisites](#17-scheduler-prerequisites)
-18. [What Is Not Yet Implemented](#18-what-is-not-yet-implemented)
-
----
-
-## 1. System Map
-
-| Subsystem | Location | Status | Header |
-|-----------|----------|--------|--------|
-| Type system | `include/kernel/types.h` | Stable | `<kernel/types.h>` |
-| PMM | `memory/pmm.c` | Stable | `<kernel/pmm.h>` |
-| VMM | `memory/vmm.c` | Stable | `<kernel/vmm.h>` |
-| Slab allocator | `memory/slab.c` | Stable | `<kernel/mmu.h>` |
-| Kernel stack alloc | `memory/kstack.c` | Stable | `<kernel/scheduler.h>` |
-| Spinlock | `lib/spinlock.c` | Stable | `<kernel/spinlock.h>` |
-| Intrusive list | `include/kernel/list.h` | Stable | `<kernel/list.h>` |
-| Allocating list | `lib/dlist.c` | Stable | `<kernel/dlist.h>` |
-| GDT | `sys/gdt.c` | Stable | `<kernel/gdt.h>` |
-| IDT / ISR dispatch | `sys/idt.c` + `sys/int.S` | Stable | `<kernel/int.h>` |
-| CPU feature detection | `sys/cpu.c` | Stable | `<kernel/cpufeature.h>` |
-| Per-CPU infrastructure | `include/kernel/cpu.h` | Stable | `<kernel/cpu.h>` |
-| LAPIC | `time/lapic.c` | Stable | `<kernel/apic.h>` |
-| IOAPIC | `sys/ioapic.c` | Stable | `<kernel/apic.h>` |
-| HPET | `time/hpet.c` | Stable | `<kernel/hpet.h>` |
-| SMP bringup | `sys/smp.c` | Stable | `<kernel/smp.h>` |
-| ACPI parsing | `acpi/acpi.c` | Stable | `<kernel/acpi.h>` |
-| ELF symbol resolution | `debug/elf.c` | Stable | `<kernel/elf.h>` |
-| Panic subsystem | `debug/panic.c` | Stable | `<kernel/panic.h>` |
-| Structured logging | `debug/log.c` | Stable | `<kernel/panic.h>` |
-| Test framework | `test/runner.c` | Stable | `<kernel/ktest.h>` |
-| Execution context model | `include/kernel/scheduler.h` | Stable | `<kernel/scheduler.h>` |
-| Scheduler | `sys/scheduler.c` | Stable | `<kernel/scheduler.h>` |
-| Process model | `sys/process.c` | Stable | `<kernel/scheduler.h>` |
-| Syscall ABI | `sys/syscall.c`, `sys/syscalls.c` | Stable | `<kernel/syscall.h>` |
-| ELF loader | `sys/elf_loader.c` | Stable | `<kernel/elf_loader.h>` |
-| VFS core | `fs/vfs.c` | Stable | `<kernel/vfs.h>` |
-| tmpfs | `fs/tmpfs.c` | Stable | `<kernel/vfs.h>` |
-| devfs | `fs/devfs.c` | Stable | `<kernel/vfs.h>` |
-| Pipes | `fs/pipe.c` | Stable | `<kernel/vfs.h>` |
-
----
-
-## 2. Address Space Layout
-
-```
-0xffffffff80000000  Kernel image (.text, .rodata, .data, .bss)
-                    Mapped by VMM at init with section-specific permissions:
-                      .text     PTE_PRESENT (execute, no write)
-                      .rodata   PTE_PRESENT | PTE_NX (read only)
-                      .data     PTE_PRESENT | PTE_WRITABLE | PTE_NX
-
-0xffff800000000000  HHDM - direct map of all tracked physical memory
-                    Base stored in hhdm_offset (set once by pmm_init).
-                    Formula: vaddr = paddr + hhdm_offset
-                             paddr = vaddr - hhdm_offset
-
-0x0000000000000000  User space
-         to
-0x00007fffffffffff
-```
-
-**Physical <-> virtual conversion rules:**
-- Never store a virtual address in a `paddr_t`.
-- Never add HHDM to an already-virtual address.
-- `HHDM_HIGHER_HALF` (`hhdm_offset`) is read-only after `pmm_init()`.
-
----
-
-## 3. Subsystem Dependency Order
-
-Subsystems are layered. A lower layer must never call upward into a higher layer.
-
-```
-[ Hardware / CPUID / ACPI tables ]
-          |
-          v
-[ PMM ]  <- hhdm_offset set here; no allocator yet
-          |
-          v
-[ VMM ]  <- kernel pagemap activated; HHDM mapped
-          |
-          v
-[ GDT ]  <- segment registers loaded
-          |
-          v
-[ IDT ]  <- interrupt vectors installed; irqs[] allocated via slab
-          |
-          v
-[ Slab / malloc / free ]
-          |
-          v
-[ Per-CPU bootstrap (core_bsp) ]  <- GS register set
-          |
-          v
-[ printf / flanterm ]
-          |
-          v
-[ CPU feature detection / ACPI / ELF / HPET / SMP ]
-          |
-          v
-[ ktest (test builds only) ]
-          |
-          v
-[ Scheduler ]
-          |
-          v
-[ Process model / Syscall ABI / ELF loader ]
-          |
-          v
-[ VFS / tmpfs / devfs / pipes ]   <- stable; disk driver + ext2 not yet implemented
-```
-
-**Consequence:** malloc is not available until after `slab_init()`. Any subsystem that calls `malloc` must be initialised after slab. The IDT allocation is the first post-slab consumer.
-
----
-
-## 4. Type System
-
-**Header:** `kernel/include/kernel/types.h`
-
-All kernel subsystems use these canonical types to make intent explicit at the type level and prevent silent coercions between physical and virtual addresses or between identifiers.
-
-| Type | Underlying | Meaning |
-|------|-----------|---------|
-| `pid_t` | `int32_t` | Process identifier; -1 = invalid |
-| `tid_t` | `int32_t` | Thread identifier; -1 = invalid |
-| `cpu_id_t` | `uint32_t` | Logical CPU index (0-based) |
-| `vaddr_t` | `uintptr_t` | Virtual address (kernel or user) |
-| `paddr_t` | `uintptr_t` | Physical frame address; never add HHDM |
-| `irq_state_t` | `bool` | Snapshot of interrupt-enable flag |
-| `errno_t` | `int` | Signed error code; 0 = success, negative = -(POSIX errno) |
-
-Standard error constants (`ENOMEM`, `EINVAL`, `EPERM`, etc.) are defined in `types.h`.
-
----
-
-## 5. Memory Subsystem
-
-### 5.1 Physical Memory Manager (PMM)
-
-**Header:** `<kernel/pmm.h>`  
-**Implementation:** `memory/pmm.c`
-
-**What it does:** Manages physical frames using a flat bitmap. Tracks all frames from address 0 up to the highest non-reserved, non-bad physical address reported by the Limine memory map.
-
-**Invariants:**
-- `pmm_init()` must be called before any other PMM function. It also sets `hhdm_offset`.
-- All returned physical addresses are 4 KiB aligned and non-zero. Physical frame 0 is permanently marked used.
-- `mmu_request_frame()` and `mmu_request_frames()` **panic on OOM**. They are for kernel-internal allocations where out-of-memory is a kernel bug. For user-space allocations (future), a fallible allocator must be used.
-- The bitmap itself lives in the first usable physical region large enough to hold it, accessed through the HHDM. The PMM is fully operational before the VMM is active because Limine pre-maps the HHDM.
-- The PMM lock (`pmm_lock`) is a spinlock; all frame operations are IRQ-safe.
-
-**Public API:**
-```c
-uintptr_t mmu_request_frame(void);              // allocate 1 frame, panics on OOM
-uintptr_t mmu_request_frames(uint64_t n);       // allocate n contiguous frames
-void      mmu_free_frames(void *phys, uint64_t n); // release n frames
-void      mmu_frame_set(uintptr_t phys);        // mark frame used
-void      mmu_frame_clear(uintptr_t phys);      // mark frame free
-uint64_t  clean_reclaimable_memory(void);       // reclaim bootloader pages
-```
-
-**HHDM constant:**
-```c
-extern uint64_t hhdm_offset;
-#define HHDM_HIGHER_HALF hhdm_offset
-```
-
-### 5.2 Virtual Memory Manager (VMM)
-
-**Header:** `<kernel/vmm.h>`  
-**Implementation:** `memory/vmm.c`
-
-**What it does:** Manages x86-64 4-level page tables. On init, builds the kernel pagemap and activates it.
-
-**Invariants:**
-- `vmm_init()` must be called after `pmm_init()`.
-- After `mmu_switch_pagemap()` the kernel pagemap is active. All accesses to HHDM addresses must be to pages that were mapped before the switch.
-- RESERVED memory entries smaller than 512 MiB are mapped into HHDM (to reach BIOS/ACPI regions like the RSDP). RESERVED entries larger than 512 MiB are skipped to avoid mapping large MMIO holes. BAD_MEMORY is never mapped.
-- `mmu_kernel_pagemap` is read-only after `vmm_init()`; no other code may reassign the pointer.
-- `mmu_map_page` and `mmu_unmap_page` are **not internally synchronized**. Callers that may race on the same pagemap must hold an external lock.
-
-**Page table flags:**
-```c
-PTE_PRESENT   (1<<0)   // page is present
-PTE_WRITABLE  (1<<1)   // page is writable
-PTE_USER      (1<<2)   // accessible from user mode
-PTE_NX        (1<<63)  // no-execute
-```
-
-**Kernel section permissions:**
-
-| Section | Flags |
-|---------|-------|
-| `.text` | `PTE_PRESENT` |
-| `.rodata` | `PTE_PRESENT \| PTE_NX` |
-| `.data`, `.bss` | `PTE_PRESENT \| PTE_WRITABLE \| PTE_NX` |
-
-**Note on `const` + `.data` placement:** Any object declared `const` that must be written exactly once at boot (e.g. `kelf`) must be annotated with `__attribute__((section(".data")))` to prevent placement in read-only `.rodata`. Cast-away-const is the intended write mechanism for such one-time initialisation.
-
-### 5.3 Slab Allocator
-
-**Header:** `<kernel/mmu.h>` (also includes `vmm.h` and `pmm.h`)  
-**Implementation:** `memory/slab.c`
-
-**What it does:** Provides `malloc` / `free` / `realloc` for general kernel heap use.
-
-**Size classes:** 8, 16, 32, 64, 128, 256, 512, 1024, 2048 bytes.  
-**Large allocations (> 2048 bytes):** served directly from the PMM with a header page.
-
-**Invariants:**
-- `slab_init()` must be called after `vmm_init()` (needs mmu_request_frame).
-- `malloc(0)` returns a valid pointer (treated as `malloc(1)`).
-- `free(NULL)` is a no-op.
-- Each slab cache is protected by an independent per-cache spinlock. Caches do not contend on each other.
-- Page identity is determined by a magic value at the page base. Double-free or bad-pointer detection panics.
-- All returned pointers are at least 8-byte aligned.
-
-### 5.4 Kernel Stack Allocator
-
-**Header:** `<kernel/scheduler.h>`  
-**Implementation:** `memory/kstack.c`
-
-**What it does:** Allocates/frees contiguous physical-backed kernel stacks mapped into the HHDM.
-
-**Invariants:**
-- Stack size is `KSTACK_SIZE` (16 KiB = 4 pages).
-- Returns the **top** of the stack (highest address). RSP should be initialized to this value.
-- Stack bottom = `top - KSTACK_SIZE`.
-- Frames are served from the PMM and surfaced through the pre-existing HHDM mapping. `kstack_alloc` and `kstack_free` do NO page-table manipulation; they rely on `vmm_init()` having permanently mapped all USABLE physical frames into the HHDM.
-- No guard pages in the current implementation. Stack overflow corrupts adjacent memory.
-
----
-
-## 6. Concurrency Primitives
-
-### 6.1 Spinlock
-
-**Header:** `<kernel/spinlock.h>`  
-**Implementation:** `lib/spinlock.c`
-
-**What it does:** Ticket spinlock that saves and restores the interrupt-enable flag. Correct for use in both normal context (interrupts enabled) and interrupt context.
-
-**Type:**
-```c
-typedef volatile struct {
-    uint16_t next_ticket;
-    uint16_t now_serving;
-} spinlock_t;
-
-#define SPINLOCK_ZERO {0}
-```
-
-**API:**
-```c
-bool spinlock_acquire(spinlock_t *lock);            // disables IRQs, returns prior IRQ state
-void spinlock_release(spinlock_t *lock, bool irq_state); // restores IRQ state
-bool spinlock_is_held(const spinlock_t *lock);      // assertion helper
-```
-
-**IRQ safety contract:**
-`spinlock_acquire()` calls `disable_interrupts()` before spinning. `spinlock_release()` calls `enable_interrupts()` only if interrupts were enabled at acquire time. This means:
-- A spinlock acquired in normal context (interrupts enabled) will restore interrupts on release.
-- A spinlock acquired in interrupt context (interrupts already disabled) will not enable interrupts on release.
-- This is safe to nest: inner locks will not re-enable interrupts that the outer lock disabled.
-
-**Usage pattern:**
-```c
-bool irq = spinlock_acquire(&lock);
-/* critical section */
-spinlock_release(&lock, irq);
-```
-
-**Hard rule:** Never sleep, block, yield, or call any function that may sleep while holding a spinlock.
-
-### 6.2 Atomic Operations
-
-The kernel currently uses raw GCC `__atomic_*` builtins directly. There is no abstraction wrapper layer. All atomic accesses are done at the call site with explicit memory orders.
-
-Conventions in use:
-- `__ATOMIC_RELAXED` for counter increments with no ordering requirement.
-- `__ATOMIC_ACQUIRE` / `__ATOMIC_RELEASE` for lock-acquire / lock-release pairs.
-- `__ATOMIC_SEQ_CST` for ownership claims (panic owner, SMP fence).
-
-### 6.3 IRQ Control (standalone)
-
-**Header:** `<kernel/cpu.h>`
-
-For critical sections that need IRQ safety without mutual exclusion (no competing CPUs), use `irq_save()` / `irq_restore()` directly:
-
-```c
-irq_state_t s = irq_save();   // disables interrupts, returns prior state
-/* IRQ-safe work */
-irq_restore(s);                // re-enables only if they were on before
-```
-
-These are thin wrappers around `interrupt_state()` + `disable_interrupts()` / `enable_interrupts()`.
-
-### 6.4 Memory Barriers
-
-Memory ordering is established through `__ATOMIC_ACQUIRE` / `__ATOMIC_RELEASE` on atomic operations. There are no standalone barrier functions. Use `asm volatile("" ::: "memory")` as a compiler barrier when needed without hardware ordering.
-
----
-
-## 7. Container Primitives
-
-### 7.1 Intrusive List (`list.h`)
-
-**Header:** `<kernel/list.h>`  
-**Implementation:** inline (header-only)
-
-**What it does:** Allocation-free doubly-linked list. The node (`list_node_t`) is embedded directly inside the owning struct. No heap allocation occurs for list operations.
-
-**Use cases:** Scheduler run queues, wait queues, timer lists, any data structure in hot paths where allocating a wrapper node per entry is unacceptable.
-
-**Key types:**
-```c
-typedef struct list_node { struct list_node *next, *prev; } list_node_t;
-typedef list_node_t list_head_t;
-```
-
-**Invariant:** An empty list has `head.next == head.prev == &head` (circular sentinel). A detached node has `node.next == node.prev == &node`.
-
-**Entry recovery:**
-```c
-thread_t *t = list_entry(node_ptr, thread_t, list_node);
-```
-
-**Not thread-safe.** Callers must hold the appropriate lock before any list operation.
-
-### 7.2 Allocating List (`dlist.h`)
-
-**Header:** `<kernel/dlist.h>`  
-**Implementation:** `lib/dlist.c`
-
-**What it does:** Non-intrusive doubly-linked list. Allocates a `dlist_node_t` wrapper per entry via `malloc`. Owns the wrapper node (the pointed-to value is not owned).
-
-**Use cases:** ACPI table enumeration, per-process thread list (process-level, not scheduler hot path). Appropriate where allocation overhead during init is acceptable.
-
-**Limitation:** Cannot be used allocation-free. Must not be used for scheduler run queues or wait queues.
-
----
-
-## 8. Hardware Abstraction Layer
-
-### 8.1 GDT
-
-**Header:** `<kernel/gdt.h>`  
-**Implementation:** `sys/gdt.c`
-
-**Current state:** 5-entry flat GDT (null, kernel code 64, kernel data 64, user code 64, user data 64). All cores share this GDT.
-
-**What is missing:** No TSS (Task State Segment) per core. A TSS provides RSP0 (the kernel stack pointer) for interrupt-driven ring-3 -> ring-0 transitions. Without it, hardware interrupts arriving while in user mode may not switch to the correct kernel stack. The current kernel reaches user space via `IRETQ` and returns via `SYSCALL`/`SYSRET`, which does not use the TSS for its stack switch. However, faults and IRQs taken in user mode are unsafe without RSP0 set. Adding a per-core TSS with a valid RSP0 is required for a fully correct user-mode implementation.
-
-Segment selectors:
-- `0x08` - kernel code
-- `0x10` - kernel data
-- `0x18` - user code (DPL 3)
-- `0x20` - user data (DPL 3)
-
-### 8.2 ACPI
-
-**Header:** `<kernel/acpi.h>`  
-**Implementation:** `acpi/acpi.c`
-
-**What it does:** Parses RSDP -> RSDT/XSDT -> MADT and FADT tables at boot. Populates linked lists of LAPIC, IOAPIC, IO-APIC source override, and NMI entries.
-
-**Invariants:**
-- Must be called after slab (for `malloc`) and after `vmm_init` (RSDP address must be mapped - ensured because VMM now maps small RESERVED regions including BIOS area).
-- All MADT lists (`madt_lapic`, `madt_ioapic`, etc.) are valid after `acpi_init()` and read-only thereafter.
-- `lapic_address` is the **virtual** (HHDM-offset) LAPIC MMIO address after init.
-
-### 8.3 CPU Feature Detection
-
-**Header:** `<kernel/cpufeature.h>`  
-**Implementation:** `sys/cpu.c`
-
-Reads CPUID leaf 1 (ECX + EDX) into a single `uint64_t cpu_features`. Access via:
-```c
-cpu_has_feature(CPU_FEATURE_APIC)  // returns non-zero if present
-```
-
-Feature constants are defined as bit positions (bits 0-31 = ECX, bits 32-63 = EDX from CPUID leaf 1).
-
----
-
-## 9. SMP and Per-CPU Infrastructure
-
-### 9.1 Per-CPU Structure (`core_t`)
-
-**Header:** `<kernel/cpu.h>`
-
-```c
-typedef struct core {
-    uint32_t       lapic_id;        // stable after init
-    cpu_id_t       cpu_id;          // logical 0-based index
-    bool           bsp;             // true only on bootstrap processor
-    uint32_t       interrupt_depth; // 0 = normal, >0 = inside IRQ handler
-    struct thread *current_thread;  // NULL before scheduler_enter()
-    list_head_t    run_queue;       // THREAD_READY threads for this core
-    spinlock_t     run_queue_lock;  // protects run_queue and state changes
-    struct thread *idle_thread;     // per-core idle; never on run queue
-} core_t;
-```
-
-**Access:** The GS base register always points to the current CPU's `core_t`. Use `this_cpu()` to get the pointer:
-```c
-core_t *cpu = this_cpu();
-```
-
-**Ownership:**
-- `lapic_id`, `cpu_id`, `bsp` are written once during init and then read-only.
-- `interrupt_depth` and `current_thread` are owned by the CPU they describe. Cross-CPU reads are lock-free; cross-CPU writes require a lock.
-
-**Allocation:** `smp_init()` allocates a single contiguous `cpu_core_local[]` array of `coreCount` entries from `malloc`. The array is never freed.
-
-### 9.2 GS Register Setup
-
-`set_gs_register(ptr)` writes `ptr` to both MSR `0xC0000101` (GS base) and `0xC0000102` (kernel GS base), then executes `SWAPGS`. The ISR stubs in `int.S` do `SWAPGS_CONDITIONAL` (only when coming from ring 3) so the kernel always has GS pointing to its own `core_t`.
-
-The `__seg_gs` GCC address-space qualifier is used in `idt.c` to read `core_local` directly from the GS segment without going through `this_cpu()`.
-
-### 9.3 SMP Bringup
-
-**Implementation:** `sys/smp.c`
-
-All cores are brought online via Limine's SMP response. Each core:
-1. Reloads GDT and IDT.
-2. Switches to the kernel pagemap.
-3. Sets its GS register to its `core_t`.
-4. Initialises its LAPIC and calibrates the LAPIC timer.
-5. Enables SSE and x87.
-6. Increments `initialized` counter (under `lock`), releases, then enters idle halt loop.
-
-The BSP waits after each AP until `initialized` matches the expected count, ensuring ordered one-at-a-time bringup.
-
-After `smp_init()` all cores are in the idle halt loop with interrupts enabled. `coreCount` is the total number of logical cores (including BSP).
-
-### 9.4 Lock Ordering
-
-The full kernel lock hierarchy (outermost -> innermost):
-
-```
-process_t.lock
-  -> thread_t.lock
-    -> wait_queue_t.lock   \  (same level; never both held simultaneously)
-    -> dead_list_lock      /
-      -> run_queue_lock
-        -> inode_t.lock     \  (per-inode; acquired after releasing process lock)
-        -> file_t.lock      /  (per-file; acquired after releasing process lock)
-          -> slab cache lock
-            -> pmm_lock
-mount_lock  (independent; never held with any of the above)
-```
-
-Rules:
-1. **process_t.lock > thread_t.lock:** Acquiring a thread lock while holding the process lock is permitted; the reverse is not.
-2. **thread_t.lock is released before touching any queue:** State transitions under `thread_t.lock` must complete before `run_queue_lock` or `wait_queue_t.lock` is acquired.
-3. **wait_queue_t.lock and dead_list_lock are independent** at the same level; they are never held simultaneously.
-4. **run_queue_lock is innermost among scheduler locks:** No other scheduler lock may be acquired while `run_queue_lock` is held.
-5. **PMM lock > VMM (no VMM lock):** VMM calls PMM internally; PMM never calls VMM.
-6. **Per-cache slab locks are independent:** no nested slab lock acquisition.
-7. **VFS I/O pattern:** acquire process_t.lock to look up and ref-count the file_t, release process_t.lock, then perform I/O (may acquire inode/file lock). Never hold process_t.lock during I/O.
-8. **mount_lock** is only held to read/write the mount table. It is never held while calling into filesystem code.
-
----
-
-## 10. Interrupt Handling
-
-**Header:** `<kernel/int.h>`  
-**ISR stubs:** `sys/int.S`  
-**Dispatch:** `sys/idt.c`
-
-### 10.1 IDT
-
-256-entry IDT shared by all cores (all cores load the same `idtp`). Vectors 0-31 are CPU exceptions. Vectors 32-254 are dynamically allocated hardware/software IRQs. Vector 255 is the SMP halt IPI (used by the panic subsystem to freeze all APs).
-
-### 10.2 ISR Stubs
-
-Each vector has a hand-written stub in `int.S` that:
-1. Pushes a dummy error code (if the CPU doesn't push one automatically).
-2. Pushes the vector number.
-3. Jumps to the common `isr_common` handler.
-
-`isr_common` saves the full register context as `struct regs`, conditionally executes `SWAPGS`, and calls `isr_handler(struct regs *)`. On return, it restores registers and executes `IRETQ`.
-
-### 10.3 Register Save Structure
-
-```c
-struct regs {
-    uintptr_t cr2, gs, fs, es, ds;
-    uintptr_t r15, r14, r13, r12, r11, r10, r9, r8;
-    uintptr_t rbp, rdi, rsi, rdx, rcx, rbx, rax;
-    uintptr_t int_no, err_code;   // pushed by stub
-    uintptr_t rip, cs, rflags, rsp, ss;  // pushed by CPU
-};
-```
-
-### 10.4 Dynamic IRQ Allocation
-
-```c
-uint8_t idt_allocate(void);                     // returns next free vector (32-254)
-void    irq_install(irq_t handler, int vector); // install handler for vector
-irq_t   irq_get(int vector);                    // query installed handler
-void    irq_uninstall(int vector);              // remove handler
-```
-
-`irq_install` / `irq_get` / `irq_uninstall` are **not interrupt-safe** and must be called from normal context only. `idt_allocate` is spinlock-protected and safe from any context.
-
-### 10.5 Exception Dispatch
-
-CPU exceptions (vectors 0-30) are dispatched in `isr_handler()`. Kernel-mode exceptions call the appropriate panic macro. User-mode exceptions currently drop the exception with a TODO comment - signal delivery to the thread is not implemented.
-
-### 10.6 Interrupt Context Rules
-
-- `interrupt_depth` in `core_t` is **not yet incremented** by the ISR stubs. The field exists for future use. Currently there is no runtime way to assert "we are in interrupt context" - this is a known gap.
-- Interrupt handlers must not block, sleep, or acquire sleeping locks (mutexes, semaphores - none of which exist yet).
-- Interrupt handlers may acquire spinlocks because `spinlock_acquire` disables interrupts, preventing re-entry on the same core.
-
----
-
-## 11. Time and Timer Foundation
-
-### 11.1 HPET
-
-**Header:** `<kernel/hpet.h>`  
-**Implementation:** `time/hpet.c`
-
-The HPET is the kernel's **reference time source**. It is used to calibrate the LAPIC timer and is available as a blocking delay primitive.
-
-**Invariants:**
-- `hpet_init()` must be called after `acpi_init()`.
-- HPET is mapped into the kernel pagemap at init via `mmu_map_page`.
-- `hpet_sleep(ns)` busy-waits (polling the counter). It is **not usable after the scheduler exists** for long sleeps - use `hpet_sleep` only in init paths.
-- `hpet_initialized` is set to true after successful init; checked before use.
-- The tick period in femtoseconds is stored in `hpetTickPeriod`.
-
-**Available functions:**
-```c
-void     hpet_sleep(uint64_t ns);       // blocking busy-wait
-void     hpet_reset_counter(void);
-uint64_t hpet_timer_since(void);        // nanoseconds since HPET start
-```
-
-### 11.2 LAPIC Timer
-
-**Header:** `<kernel/apic.h>`  
-**Implementation:** `time/lapic.c`
-
-The LAPIC timer drives per-core periodic interrupts. Each core calibrates its own timer against the HPET during bringup.
-
-**Calibration:** `lapic_timer_calibrate(ns)` uses `hpet_sleep(ns)` to measure LAPIC ticks, then programs the timer in periodic mode on vector 32.
-
-**Tick accounting:** `kernel_ticks` increments by `ticksIn10ms` on each LAPIC interrupt (every ~10 ms by default). This is a **global** counter with no synchronisation - it is read-only useful for rough timing, not for precise per-thread accounting.
-
-**Scheduler integration:** The LAPIC timer IRQ (vector 32) drives preemption. After `scheduler_init()`, the caller installs the tick hook via `lapic_set_tick_hook(schedule)`. On each tick, EOI is sent and then `schedule()` is called to preempt the current thread if a higher-priority thread is waiting. The BSP installs the hook after all AP run queues are populated, ensuring no AP fires before it has work.
-
-```c
-uint64_t get_kernel_ticks(void);        // rough tick count since LAPIC init
-uint64_t lapic_get_frequency(void);     // LAPIC ticks per second
-```
-
-### 11.3 Monotonic Time (Gap)
-
-There is currently **no monotonic wall-clock API**. `hpet_timer_since()` provides nanoseconds since HPET init but is not authoritative. A future `ktime_get()` / `ktime_ns()` API should wrap HPET or TSC into a stable monotonic source.
-
----
-
-## 12. Execution Context Model
-
-The scheduler is fully implemented in `sys/scheduler.c`. This section documents the live data model and runtime behavior.
-
-### 12.1 Thread Structure (`thread_t`)
-
-**Header:** `<kernel/scheduler.h>`
-
-```c
-typedef struct thread {
-    tid_t           tid;
-    struct process *parent;
-    thread_state_t  state;
-    spinlock_t      lock;
-    context_regs_t  context;
-    uintptr_t       kstack_top;
-    uintptr_t       kstack_bottom;
-    list_node_t     list_node;   // run queue OR dead list linkage (mutually exclusive)
-    list_node_t     wq_node;     // wait queue linkage
-} thread_t;
-```
-
-`list_node` is used for the run queue when `state == THREAD_READY`, and for `dead_list` when `state == THREAD_DEAD`. It must never be on both simultaneously.
-
-### 12.2 Thread State Machine
-
-```
-THREAD_CREATED -> THREAD_READY -> THREAD_RUNNING
-                       ^                |
-                   (wake)         THREAD_BLOCKED
-                       ^                |
-                       +----------------+
-                    (wait_queue_wake_*)
-
-               (any state) -> THREAD_DEAD  (via thread_exit())
-```
-
-All state transitions are made while holding `thread_t.lock`, except the RUNNING -> BLOCKED transition in `thread_block()` which also requires the wait queue lock immediately after. State transitions inside `schedule()` happen under `run_queue_lock`.
-
-### 12.3 Context Switch Register State
-
-```c
-typedef struct {
-    uintptr_t rip;   // resume address (return from context_switch or thread entry)
-    uintptr_t rsp;   // kernel stack pointer at switch point
-    uintptr_t rbx, rbp, r12, r13, r14, r15;
-} context_regs_t;
-```
-
-Only callee-saved registers are stored. The context switch stub (`sys/switch.S`) saves these from the outgoing thread and loads them for the incoming thread.
-
-**New thread setup:** `context.rip` is set to `thread_entry_trampoline` (which does STI then calls the entry function stored in `context.r12`). `context.rsp` is the top of the kernel stack.
-
-### 12.4 Process Structure (`process_t`)
-
-```c
-typedef struct process {
-    pid_t        pid;
-    const char  *name;
-
-    pagemap_t   *pagemap;       // address space; NULL for kernel processes
-    spinlock_t   lock;
-
-    list_head_t  threads;       // thread_t via thread_t.list_node
-    uint32_t     thread_count;
-
-    // User address space
-    list_head_t  vma_list;      // vma_t entries; protected by lock
-    uintptr_t    mmap_base;     // watermark for next anonymous mmap()
-    uintptr_t    brk;           // program break; set by ELF loader
-} process_t;
-```
-
-`kernel_process` is the global kernel process. All kernel threads (idle, reaper, and any other kernel worker) are attached to it with `pagemap == NULL`.
-
-VMA management is implemented in `sys/process.c`. Each `vma_t` records a page-aligned `[base, base+length)` region with `PROT_*` flags. `process_mmap` adds VMAs and allocates physical frames lazily (demand paging via `page_fault_handle`). `process_munmap` removes VMAs and unmaps pages. `process_mprotect` splits VMAs at range boundaries and re-maps pages with updated PTE flags.
-
-### 12.5 Wait Queue (`wait_queue_t`)
-
-```c
-typedef struct {
-    spinlock_t  lock;
-    list_head_t waiters;     // thread_t via thread_t.wq_node
-} wait_queue_t;
-```
-
-**Blocking:** `thread_block(wq)` transitions the caller to `THREAD_BLOCKED`, appends its `wq_node` to `wq->waiters`, then calls `schedule()`. The function returns only after a waker has transitioned the thread back to `THREAD_READY` and the scheduler has picked it up.
-
-**Waking:** `wait_queue_wake_one(wq)` / `wait_queue_wake_all(wq)` drain waiters from the queue (under `wq->lock`) then call `thread_ready()` for each (after releasing `wq->lock`).
-
-**Race note:** The caller of `thread_block()` is responsible for holding any external lock needed to prevent the wakeup from racing the block. The canonical pattern is: set a condition flag, then release the external lock and call `thread_block()`.
-
-### 12.6 Idle Thread
-
-Each core has a dedicated idle thread (`core_t.idle_thread`). It runs `enable_interrupts(); hlt;` in a tight loop. The idle thread is **never on any run queue**; `schedule()` switches to it explicitly when the run queue is empty and the current thread is not runnable (blocked or dead).
-
-The idle thread is created by `scheduler_init()` for every core. It is not freed for the lifetime of the kernel.
-
-### 12.7 Reaper Thread
-
-A single global reaper thread drains `dead_list` (threads that have called `thread_exit()`), freeing their kernel stacks and `thread_t` allocations. It calls `thread_block(&reaper_wq)` when the list is empty, and is woken by `thread_exit()` via `wait_queue_wake_one(&reaper_wq)`.
-
-The reaper thread is created by `scheduler_init()` but not enqueued until `scheduler_start_reaper()` is called (after all other per-core queues are populated, so the queues appear empty at test time). It runs on core 0 initially and floats to whichever core wakes it thereafter.
-
-### 12.8 Kernel Stack
-
-```c
-uintptr_t kstack_alloc(void);          // returns stack top (RSP initial value)
-void      kstack_free(uintptr_t top);  // releases stack
-#define   KSTACK_SIZE (16u * 1024u)    // 16 KiB
-```
-
-Kernel stacks are owned by their `thread_t`. The reaper calls `kstack_free(t->kstack_top)` before freeing the `thread_t`.
-
-### 12.9 Scheduler API Summary
-
-```c
-// Scheduler lifecycle
-void      scheduler_init(void);
-void      scheduler_enter(void) __noreturn;
-void      schedule(void);
-
-// Kernel thread management
-thread_t *thread_create(process_t *p, void (*fn)(void));
-void      thread_ready(thread_t *t);
-void      thread_ready_on(thread_t *t, cpu_id_t core);
-void      thread_block(wait_queue_t *wq);
-void      thread_exit(void) __noreturn;
-void      wait_queue_wake_one(wait_queue_t *wq);
-void      wait_queue_wake_all(wait_queue_t *wq);
-
-// User thread
-thread_t *thread_create_user(process_t *proc, uintptr_t entry, uintptr_t usp);
-
-// Process lifecycle
-process_t *process_create(const char *name);
-void       process_destroy(process_t *proc);
-
-// Process address space
-uintptr_t  process_mmap(process_t *proc, uintptr_t hint, size_t length, uint32_t prot);
-void       process_munmap(process_t *proc, uintptr_t addr, size_t length);
-errno_t    process_mprotect(process_t *proc, uintptr_t addr, size_t length, uint32_t prot);
-uintptr_t  process_alloc_ustack(process_t *proc);
-uintptr_t  process_ensure_page(process_t *proc, uintptr_t vaddr);
-void       page_fault_handle(struct regs *r);
-```
-
----
-
-## 13. Logging and Observability
-
-### 13.1 kprintf
-
-**Header:** `<kernel/kprintf.h>`
-
-`kprintf(fmt, ...)` writes to the flanterm framebuffer terminal. Available after `printf_init()`. Not usable before that call (pre-init output must use serial directly as the panic subsystem does).
-
-`kprintf` is **not safe in interrupt context** in the current implementation - it does not hold a lock and the framebuffer context is not re-entrant. Using `kprintf` inside an interrupt handler is a current design gap; fix before interrupt handlers become frequent.
-
-### 13.2 Structured Logging (`klog`)
-
-**Header:** `<kernel/panic.h>`
-
-```c
-void klog(log_severity_t sev, const char *subsys, const char *fmt, ...);
-
-// Shorthands:
-KINFO("subsys", "fmt", ...);
-KWARN("subsys", "fmt", ...);
-KERROR("subsys", "fmt", ...);
-KDEBUG("subsys", "fmt", ...);
-```
-
-Severity levels: `LOG_DEBUG=0`, `LOG_INFO=1`, `LOG_WARN=2`, `LOG_ERROR=3`.
-
-`klog` calls `kprintf` internally and has the same context restrictions.
-
-### 13.3 Panic Subsystem
-
-**Header:** `<kernel/panic.h>`  
-**Implementation:** `debug/panic.c`
-
-The panic subsystem is completely allocation-free and spinlock-free. It uses direct flanterm writes and polling serial output (COM1).
-
-**Entry points (use macros, not `_kpanic_impl` directly):**
-```c
-PANIC(msg)                          // generic, no register context
-SUBSYS_PANIC(subsys, msg)           // tagged panic
-KERNEL_ASSERT(cond)                 // runtime assertion
-KERNEL_BUG(msg)                     // unreachable code reached
-EXCEPTION_PANIC(subsys, msg, regs)  // CPU exception with register dump
-PAGE_FAULT_PANIC(regs)              // page fault with CR2 decode
-DOUBLE_FAULT_PANIC(regs)            // double fault
-```
-
-**SMP behaviour:** On entry, the panicking CPU broadcasts vector 255 IPI to all other cores (which execute `cli; hlt`). Only one CPU renders the diagnostic output.
-
-**Depth gating:**
-- Depth 1: full diagnostic to framebuffer + serial.
-- Depth 2 (nested panic): serial only, minimal output.
-- Depth >= 3: immediate halt, system too broken to render.
-
-**Safe in:** interrupt context, panic context, before `printf_init()`, before `slab_init()`.  
-**Not safe in:** nothing - this is the path of last resort.
-
-### 13.4 Stack Trace
-
-**Header:** `<kernel/stacktrace.h>`  
-**Implementation:** `debug/stacktrace.c`
-
-Requires the kernel compiled with `-fno-omit-frame-pointer` (enforced in the Makefile). Walks the frame chain from an RBP value. Resolves symbols through `kelf` if ELF init has completed.
-
-All functions are allocation-free and safe in interrupt and panic context.
-
----
-
-## 14. Test Framework
-
-**Header:** `<kernel/ktest.h>`  
-**Implementation:** `test/runner.c`
-
-**Registration:**
-```c
-KTEST("name", "subsystem", "description", KT_FLAG_CRITICAL, test_fn);
-```
-
-Tests are placed in the `.ktest` linker section and auto-discovered at boot without a central registry.
-
-**Expected-panic testing:**
-```c
-KT_EXPECT_PANIC(ctx, "substring") {
-    KERNEL_ASSERT(false);
-}
-KT_EXPECT_PANIC_VERIFY(ctx);
-```
-
-**Build flags:** Compiled separately with `-DKTEST_ENABLED`. The normal kernel build is unaffected.
-
-**CI integration:** The test runner writes a result code to QEMU's `isa-debug-exit` device (exit code 1 = all passed).
-
-**Currently registered tests:** 186 tests across `memory`, `slab`, `vmm`, `list`, `dlist`, `process`, `cpu`, `hpet`, `types`, `smp`, `panic`, `spinlock`, `scheduler`, and `elf` subsystems.
-
----
-
-## 15. Concurrency Rules
-
-These are hard invariants. Violation is a kernel bug, not a trade-off.
-
-**1. No sleeping while holding a spinlock.**  
-Any code that may yield, block, or call the scheduler must not hold a spinlock. If you need to hold a resource lock and sleep, that resource needs a mutex or semaphore - neither of which exists yet. This means the current kernel has no lock that permits sleeping.
-
-**2. No blocking in interrupt context.**  
-Interrupt handlers run on the interrupted thread's stack. They must not block, call malloc, or call any function that may sleep.
-
-**3. Lock ordering must be globally consistent.**  
-When multiple locks must be held simultaneously, they must always be acquired in the same documented order. The current lock hierarchy is shallow; it must be updated here as new locks are added.
-
-**Current lock ordering (outermost -> innermost):**
-```
-process_t.lock
-  -> thread_t.lock
-    -> wait_queue_t.lock   \  (same level; never both held simultaneously)
-    -> dead_list_lock      /
-      -> run_queue_lock
-        -> slab cache lock
-          -> pmm_lock
-```
-
-A CPU must never acquire a lock that is higher in this order while holding a lower one. `wait_queue_t.lock` and `dead_list_lock` are at the same level and are never held simultaneously. Acquiring the same lock level on two different objects requires a consistent tie-breaking rule (e.g., acquire by address order).
-
-**4. Critical sections must be minimal.**  
-Spinlocks must be held for the shortest possible duration. Work that does not require mutual exclusion must be moved outside the locked region.
-
-**5. All shared state must have a synchronisation owner.**  
-Every global or shared data structure must have a single designated lock. Implicit protection is not acceptable.
-
-**6. Cross-CPU access to `core_t`.**  
-Reading another CPU's `current_thread` is permitted lock-free for approximate checks. Writing another CPU's `core_t` fields requires a lock or IPI coordination. The panicking CPU sets `g_panic_owner` with `__ATOMIC_SEQ_CST` as an example of the correct cross-CPU coordination pattern.
-
----
-
-## 16. Memory Ownership Rules
-
-**1. Allocations have exactly one owner.**  
-When ownership is transferred across a function boundary, the transfer is explicit: document it at the call site or in the header contract.
-
-**2. Shared objects use reference counting.**  
-Objects accessible from multiple contexts with non-trivial lifetimes must use reference counting. The process model is implemented; VFS file descriptors and inodes will be the first consumers of a formal refcount API.
-
-**3. No hidden allocations.**  
-A function that allocates memory internally and returns a pointer without documenting it in its interface creates implicit ownership. The kernel currently has several violations of this rule in ACPI (populating global lists without documented cleanup paths). These are acceptable at init time but the pattern must not spread to runtime paths.
-
-**4. Every allocation has a cleanup path.**  
-Even if cleanup is never called in practice, it must be designed. Exceptions: allocations made once at boot that live for the kernel lifetime (kernel pagemap, cpu_core_local, irqs[], etc.) do not need a cleanup path, but must be documented as permanent.
-
-**5. Reclaimed memory is gone.**  
-After `clean_reclaimable_memory()`, Limine pages (bootloader data, ACPI tables in reclaimable regions) are invalid. Data needed beyond that point must be copied to the heap before reclaim. `elf_init()` does this correctly for the kernel ELF image.
-
-**6. Kernel stack ownership.**  
-A `thread_t` owns its `kstack_top` allocation. The reaper thread calls `kstack_free(t->kstack_top)` then `free(t)` for every thread that reaches `THREAD_DEAD`.
-
----
-
-## 17. Scheduler Prerequisites
-
-All prerequisites for the base scheduler are met. The scheduler is implemented and running.
-
-| Prerequisite | Status | Notes |
-|-------------|--------|-------|
-| `thread_t` structure defined | done | `scheduler.h` |
-| `process_t` structure defined | done | `scheduler.h` |
-| `thread_state_t` enum | done | `scheduler.h` |
-| `context_regs_t` callee-save layout | done | `scheduler.h` |
-| `wait_queue_t` type | done | `scheduler.h` |
-| `kstack_alloc()` / `kstack_free()` | done | `memory/kstack.c` |
-| `this_cpu()` returning `core_t *` | done | `cpu.h` |
-| `core_t.current_thread` field | done | `cpu.h` |
-| `core_t.idle_thread` field | done | `cpu.h` |
-| `core_t.run_queue` + `run_queue_lock` | done | `cpu.h` |
-| `core_t.interrupt_depth` field | done | `cpu.h` (not yet incremented by ISR stubs) |
-| Intrusive list for run queues | done | `list.h` |
-| Spinlock with IRQ save/restore | done | `spinlock.h` |
-| LAPIC timer delivering IRQ | done | vector 32, periodic |
-| Per-core GS register set | done | `smp_init()` |
-| Context switch assembly stub | done | `sys/switch.S` |
-| `thread_create()` | done | `sys/scheduler.c` |
-| `thread_ready()` / `thread_ready_on()` | done | `sys/scheduler.c` |
-| `schedule()` (pick next thread) | done | `sys/scheduler.c` |
-| `thread_block()` / `wait_queue_wake_*()` | done | `sys/scheduler.c` |
-| `thread_exit()` + reaper | done | `sys/scheduler.c` |
-| Per-core idle thread | done | `sys/scheduler.c` |
-| Preemption via LAPIC tick hook | done | `lapic_set_tick_hook(schedule)` in `kernel.c` |
-| TSS per core in GDT | done | `sys/gdt.c`; `tss.rsp0` updated by `schedule()` and `scheduler_enter()` |
-| `interrupt_depth` incremented in ISR stubs | missing | Needed for "in interrupt context?" assertion |
-
----
-
-## 18. What Is Not Yet Implemented
-
-The following subsystems and features are explicitly absent from the current codebase.
-
-### Process lifecycle (hard blocker — nothing else in this section matters until these land)
-
-| Feature | Notes |
-|---------|-------|
-| `fork` (58) / `clone` (56) | No process spawning; all userspace is single-process; implement with physical page copy first, CoW later |
-| `execve` (59) / `execveat` (322) | VFS and `elf_load_user` exist; wiring them together with argv/envp/auxv setup is the remaining work |
-| `wait4` (61) / `waitpid` | Requires `exit_status` field on `process_t` and a per-process dead-children wait queue |
-| Parent-child PID tracking | `getppid` always returns 1; no `process_t.parent` field |
-
-### Signals
-
-| Feature | Notes |
-|---------|-------|
-| Signal delivery | Per-thread pending/blocked bitmasks; frame build on user stack; `rt_sigreturn` (15) for handler return; minimum needed: SIGSEGV (user fault), SIGCHLD (child exit), SIGPIPE (broken pipe write) |
-| `kill` syscall (62) | Trivial once delivery machinery exists |
-| User-mode exception handling | Faults in ring-3 currently log a TODO and hang; need to deliver SIGSEGV / SIGBUS instead |
-| `interrupt_depth` tracking | Field exists in `core_t` but ISR stubs do not increment it; needed for context assertions |
-
-### Synchronization
-
-| Feature | Notes |
-|---------|-------|
-| `futex` WAIT / WAKE (202) | Currently returns `ENOSYS`; musl threading requires at minimum `FUTEX_WAIT` and `FUTEX_WAKE`; implement with a VA-keyed hash table of wait queues |
-| Mutex / semaphore | `thread_block()` exists and is the right primitive; the sleeping-lock API can be built directly on top |
-
-### Storage and filesystems
-
-| Feature | Notes |
-|---------|-------|
-| Storage driver | No disk access; virtio-blk (for QEMU) or AHCI needed; alternatively virtio-9p maps a host directory with no disk format required |
-| ext2 filesystem | Block device + block cache abstraction needed first; ext2 is the natural first on-disk format |
-| Dynamic ELF loading | PT_INTERP detection and dynamic linker loading; required to run dynamically-linked binaries |
-
-### Drivers and hardware
-
-| Feature | Notes |
-|---------|-------|
-| Keyboard driver | PS/2 IRQ 1, scancode-to-ASCII; required for interactive use; no input device exists today |
-| Driver framework | No driver registration model; character device interface is ad-hoc in devfs |
-| PCI enumeration | No PCI bus walk; blocks virtio-blk, NIC, and other PCI peripherals |
-
-### VM
-
-| Feature | Notes |
-|---------|-------|
-| Copy-on-write pages | Needed for efficient `fork`; mark PTEs read-only in both parent/child, copy on first write fault in `page_fault_handle` |
-| Guard pages on kernel stacks | Stack overflow silently corrupts adjacent memory; needs VMM support for intentionally unmapped pages |
-| Page reclaim | No eviction policy; physical memory is never reclaimed from user processes |
-
-### Observability gaps
-
-| Feature | Notes |
-|---------|-------|
-| `kprintf` re-entrancy / locking | Unsafe in interrupt context; framebuffer writes are not serialized |
-| Per-thread CPU time accounting | Tick hook exists; needs a `cpu_time_ns` counter in `thread_t` incremented on each preemption |
-
-### Long-term (not immediate)
-
-| Feature | Notes |
-|---------|-------|
-| SMP load balancing | Round-robin per-core queues exist; no work-stealing or push policy |
-| MLFQ / CFS scheduling | Round-robin is sufficient until multi-process workloads justify it |
-| Networking | Not designed |
-| Shared memory (`mmap` file-backed / `MAP_SHARED`) | Anonymous `MAP_ANONYMOUS` works; file-backed and shared mappings not implemented |
+This is the authoritative implementation reference for the supported AArch64
+kernel. [README](../README.md) defines the design rules. Platform and early-boot
+contracts are expanded in [Boot and platform](boot.md). AArch64 is the only implementation. The former x86 backend has been removed,
+not retained as a build option.
+
+## Subsystem map
+
+| Concern | Implementation | Contract |
+|---|---|---|
+| Entry / DTB | `kernel.c`, `boot/entry.S`, `boot/memory.c` | EL1, valid DTB; reserve all live boot objects |
+| RAM / heap | `boot/frames.c`, `memory/pages.c`, `memory/slab.c` | Fallible caller-owned frames; no IRQ allocations |
+| Translation | `memory/mmu.c`, `memory/user.c` | Privileged shared kernel branches, private user branches |
+| CPU / SMP | `sys/cpu.c`, `sys/smp.c`, `sys/secondary.S` | Permanent CPU storage; PSCI startup; fixed affinity |
+| IRQ / time | `sys/interrupts.c`, `time/timer.c` | EOI before scheduling, CPU-local timer state |
+| Threads | `sys/scheduler.c`, `sys/switch.S` | No scheduler lock crosses a stack switch |
+| Processes | `sys/process.c`, `sys/user.c` | Wait owns zombie collection after off-CPU reaping |
+| ELF | `sys/elf_loader.c` | Validated static AArch64 images; unpublished rollback |
+| ABI | `sys/syscalls.c`, `include/kernel/linux_abi.h` | Linux ARM numbers/layouts; checked-copy boundary |
+| Files | `fs/vfs.c`, `fs/tmpfs.c`, `fs/devfs.c`, `fs/pipe.c`, `fs/init.c` | Refcounted inodes/open descriptions; process-owned slots |
+| Diagnostics | `debug/exception.c`, `debug/panic.c` | Allocation-free fatal paths; SMP ownership |
+| Normal startup | `sys/startup.c`, `../userspace/init/init.c` | Start CPUs/filesystems and one init; no validation workers |
+| Tests | `test/`, `../userspace/tests/init.c` | Explicit kernel/musl regressions |
+
+Paths in this table are relative to `kernel/`. Kernel subsystem interfaces live under `kernel/include/kernel/`; the platform
+console interface lives under `kernel/include/platform/`. No architecture wrapper
+or alternate backend is required. `kernel/build.mk` is the canonical build definition.
+
+## Boot and address-space layout
+
+Boot follows the ARM64 Image protocol and receives the DTB in x0. The kernel is
+linked at physical/virtual `0x40080000`; RAM starts at `0x40000000`. Four-level
+4 KiB page tables identity-map discovered RAM and required UART/GIC MMIO. Kernel
+text is privileged RX, rodata privileged R/NX and other RAM privileged RW/NX.
+Reservations prevent allocation, rather than removing mappings.
+
+User mappings occupy `[0x10000, 0x08000000)`, below the GIC device range. A process
+privately owns the first three ancestors of that window, its user leaf tables,
+reservation metadata, and anonymous physical frames. Other kernel table branches
+are shared and immutable. Stacks end at `0x07fff000`, reserve 128 KiB and have an
+unmapped page below. ELF loading moves the anonymous mmap watermark above the
+image when necessary. This is a transitional layout, not a higher-half kernel.
+
+PTEs always set PXN on user pages, set UXN except for executable mappings and reject
+W+X. Write/execute imply read. Demand allocation zeroes frames; PROT_NONE retains
+backing ownership. Empty leaf tables remain owned until process destruction.
+Permission revocation uses break-before-make and `TLBI VAAE1IS` with completion
+barriers before physical reuse. TTBR0 switches currently flush ASID zero locally.
+Executable publication cleans data to PoU and invalidates instruction caches.
+
+## Scheduler, interrupts and FP/SIMD
+
+Each CPU owns a run queue, idle thread, current/previous context, timer and GIC
+private interface. TPIDR_EL1 selects CPU storage. The sole scheduler-state lock
+protects run/wait/dead lists and lifecycle transitions. Ready publication fixes
+affinity; remote wakeups request rescheduling by SGI. No load balancing or hotplug
+is implemented.
+
+An outgoing context remains `on_cpu` until assembly saves its state, changes SP,
+and calls `scheduler_switch_complete` on the incoming stack. A wake before that
+point marks it ready but defers queue publication. Dead contexts become visible
+to the CPU-0 reaper only after that handoff. No scheduler lock survives a switch.
+
+Exception frames preserve all integer registers, ELR/SPSR and separate SP_EL0 and
+kernel-stack values. IRQ dispatch finishes GIC EOI and clears interrupt depth
+before tail preemption. Synchronous user syscalls enable IRQs on their owned
+kernel stacks and mask them again before vector return. Kernel C remains built
+with `-mgeneral-regs-only`; assembly context switches preserve all q0–q31, FPCR,
+and FPSR. CPACR_EL1 enables user FP/SIMD on every CPU. Initial entry clears that
+bank and integer registers before ERET. TPIDR_EL0 is saved per thread for musl TLS.
+
+## Process ownership, completion and waiting
+
+`arm64_elf_load` returns an unpublished process and CREATED thread owned by its
+caller. The caller must attach the process to a live parent before making its
+thread ready. Cancelling an unpublished thread precedes destroying its process.
+A loaded process has one user thread; user clone/fork are not implemented.
+
+The process-tree lock protects parent pointers, child lists and completion state.
+It is never acquired under the scheduler-state lock. Wait releases it before
+sleeping; its scheduler predicate only reads an atomic parent sequence. Completion
+increments that sequence before waking waiters, closing the lost-wakeup window.
+getppid snapshots its result under the tree lock so adoption cannot race parent
+reclamation.
+
+The reaper frees the final kernel stack/descriptor, publishes thread accounting,
+then closes process descriptor references and releases its CWD reference. Only
+then does it mark the process completed and wake its parent. Address-space pages
+remain zombie-owned until wait removes the child and destroys it. Destruction
+asserts no CPU still advertises that process as active. Wait consumes status once;
+WNOHANG returns zero for an unfinished matching child, and no matching child gives
+-ECHILD. Exiting parents transfer children to the kernel process, including already
+completed children. Kernel-owned children still require a kernel wait caller.
+
+Normal exit encodes `(status & 255) << 8`; fatal EL0 faults encode signal-style
+status 11 without signal-handler delivery. exit and exit_group coincide under the
+current one-user-thread model. They are not a multithreaded group-exit implementation.
+
+## ELF and initial stack
+
+Only little-endian ELF64 ET_EXEC, EM_AARCH64 static binaries are supported. Loader
+validation bounds program tables and file slices, checks file/memory sizes,
+alignment/congruence, address limits, executable entry and mapped readable program
+headers, and rejects page-overlapping LOAD segments, W+X, dynamic interpreters,
+PT_DYNAMIC and executable stacks. TLS initialized bytes must be file-backed by a
+readable LOAD; pure TBSS may be outside LOAD storage. TLS size/alignment are bounded.
+Failures destroy all unpublished mappings and descriptor references.
+
+LOAD pages receive final user permissions before publication; loader copies use
+privileged physical aliases. Anonymous zero-fill supplies BSS. The aligned initial
+stack provides argc/argv, terminated envp and auxv, including AT_PHDR/PHENT/PHNUM,
+PAGESZ, ENTRY, identities, SECURE, EXECFN and RANDOM. Musl discovers TLS via these
+headers and initializes TPIDR_EL0 itself. AT_RANDOM currently contains a predictable
+counter/PID-derived bootstrap nonce; there is no secure entropy source or getrandom
+implementation.
+
+Parents inherit referenced CWD/open descriptions; CLOEXEC slots are excluded when
+loading the child image. Root init gets independent terminal descriptors 0–2.
+There is no executable filesystem lookup or execve syscall yet: the boot coordinator
+loads the embedded static ELF through the same loader API.
+
+## Filesystem ownership and concurrency
+
+The shared VFS mounts tmpfs at `/` and devfs at `/dev`; `/tmp` is created during
+userspace startup. Filesystem code depends on the heap and the canonical VFS interfaces.
+The ARM tty uses length-delimited PL011 writes; normal writes serialize output,
+while emergency panic output remains lock-free. TTY input currently reports EOF.
+
+A descriptor slot owns one reference to an open description; each description
+owns one inode reference. Duplication/inheritance share positions and status flags.
+Descriptor close removes the slot under the process lock and drops the reference
+outside that lock. I/O borrows a file reference before releasing the process lock.
+Mutable status flags use atomic snapshots; F_SETFL also serializes updates with
+the file lock. Close-on-exec belongs to the individual descriptor slot.
+
+Regular I/O and directory enumeration lock file position before inode content.
+Creation snapshots umask under the process lock. Positioned callbacks leave
+the shared position unchanged. Growth checks arithmetic and clears holes after a
+prior truncate. Nonblocking pipes return EAGAIN instead of polling; blocking paths
+yield without holding pipe locks. EOF observes an empty buffer and the final write-description
+reference under the same pipe lock, and absent readers produce EPIPE. Pipe writes/writev are not yet a full
+Linux PIPE_BUF atomicity implementation.
+
+Tmpfs rename prepares allocation first and orders both directory locks by address;
+same-entry rename is a no-op and destination replacement retains cleanup ownership.
+Cross-backend rename gives EXDEV. Directory rename is rejected pending cycle checks;
+cross-mount identity for multiple tmpfs instances is not represented yet.
+
+## Linux AArch64 ABI
+
+SVC uses x8 for number, x0–x5 for arguments and signed x0 results. The syscall layer
+copies paths, metadata and byte buffers through checked process mappings; no raw
+user pointer reaches a filesystem callback. Read buffers are preflighted before
+consuming input. Copies revalidate mappings and may return a successful prefix.
+The ARM stat structure is 128 bytes, with compile-time size/offset checks.
+
+| Group | Implemented numbers / operations |
+|---|---|
+| Descriptors / terminal | 23 dup, 24 dup3, 25 fcntl, 29 supported tty ioctls, 57 close |
+| Paths | 17 getcwd, 34 mkdirat, 35 unlinkat/rmdir, 38 renameat, 45 truncate, 46 ftruncate, 48 faccessat, 49 chdir, 56 openat |
+| Data / directories | 59 pipe2, 61 getdents64, 62 lseek, 63/64 read/write, 65/66 readv/writev, 67/68 pread64/pwrite64, 79 newfstatat, 80 fstat |
+| Memory | 214 brk, 215 munmap, 222 anonymous private mmap, 226 mprotect |
+| Completion | 93 exit, 94 exit_group, 260 wait4 (no rusage) |
+| Identity | 160 uname, 166 umask, 172/173 getpid/getppid, 174–177 root credential IDs, 178 gettid |
+| Time / scheduling | 101 nanosleep, 113 clock_gettime, 115 clock_nanosleep, 124 sched_yield |
+| Bootstrap support | 96 set_tid_address identity only, 261 read-only stack/descriptor prlimit64, 81 sync, 82/83 fsync/fdatasync |
+
+Unsupported operations return negative errno, usually ENOSYS. Signals, futexes,
+robust lists, clone/fork/execve, rusage, a credential/permission model and dynamic
+linking are not implemented. Absolute paths and AT_FDCWD are supported; other
+relative directory descriptors are not. Memory mappings are anonymous/private,
+not file-backed/shared. User mapping placement is a monotonic watermark and can
+leave gaps on failure. Realtime currently reports monotonic uptime; there is no RTC
+wall-clock source. Sleep yields rather than using a timer wait queue. The bootstrap
+set_tid_address handler does not implement clear-child-TID wakeups.
+
+## Verification and build policy
+
+`make` and direct `make -C kernel` build normal ARM outputs in `build/kernel/`.
+`make run` initializes the machine and starts one normal musl init; it runs no
+allocator, interrupt, scheduler, ELF or userspace regression workloads. `make test`
+and `check-*` targets recursively select `KERNEL_SELF_TESTS=1` and use the separate
+`build/tests/` directory. Their kernel includes validation workers, and
+their init ELF comes from `userspace/tests/init.c`. Test builds cannot overwrite
+the normal image. `make test` runs only the required ARM/native suite. Zig cross-compiles a static musl ELF and
+keeps its caches inside `build/`. The checked boot matrix covers 1/2/4/8 CPUs and
+128/256/512 MiB. Success requires the existing kernel/MMU/SMP/EL0 markers and the
+new ELF/shared-filesystem/musl/wait/adoption/reclamation markers, with exact final
+thread counts. Two musl waves per CPU check post-warmup frame equality; malformed
+ELFs and bad user pointers must fail without a kernel panic.
+
+The x86 backend, compatibility structs/IRQ branches, obsolete kernel tests,
+Limine/ACPI/APIC/HPET code, and legacy userspace/build utilities have been removed.
+The scheduler header models the actual ARM state lock and page reservations;
+it no longer carries unused per-thread/queue locks, thread lists or VMAs for a
+retired backend. Native DTB/frame/memory-operation fixtures remain host-compiled tests rather than
+an alternate kernel target.
+
+## Source formatting and constants
+
+`make format` applies `.clang-format` to all first-party kernel/userspace C and
+headers, plus the first-party freestanding string/memory declarations.
+`make check-format` verifies the same set without modifying files.
+Install clang-format (LLVM), or set `CLANG_FORMAT` to its executable. Upstream
+printf and imported compiler/integer/ELF compatibility headers retain their existing formatting.
+Assembly, Python and build files are maintained in their native syntax.
+
+Use a single blank line between logical steps within a function: validation,
+resource acquisition, initialization, work, and cleanup. Separate control-flow
+blocks from surrounding work and keep adjacent functions and type declarations
+visually distinct. Keep related assignments and short operation sequences
+together; do not add a blank line after every statement. Clang-format preserves
+these section breaks, but choosing them requires a readability review.
+
+Use descriptive identifiers, named ABI/register fields and short function
+contracts. `linux_abi.h` owns implemented Linux syscall numbers and shared terminal
+wire constants; `arm64_mmu.h` owns shared translation geometry and PTE fields.
+Tests may retain literal input/expected ABI values to check the implementation
+independently. Architectural register names and standard ABI field names retain
+their conventional spelling.
+
+`memory/user.c` owns reservation metadata, demand frames and private tables. It
+has no filesystem, scheduler-call or exception-dispatch dependency. Process
+creation/destruction belong to `sys/process.c`; TTBR/TLS switching, EL0 entry and
+exception handling belong to `sys/user.c`. Address-space roots are borrowed;
+only unpublished or fully off-CPU spaces may be destroyed.

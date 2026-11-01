@@ -1,7 +1,7 @@
 #pragma once
 
 /*
- * list.h - allocation-free intrusive doubly-linked list
+ * list.head - allocation-free intrusive doubly-linked list
  *
  * Design: embed list_node_t directly inside the owning struct.
  * The list never allocates; node memory is part of the object.
@@ -18,14 +18,14 @@
  *
  * Contrast with dlist_t (kernel/lib/dlist.c):
  *   dlist_t is a non-intrusive list that allocates a wrapper node per entry.
- *   It is suitable for use during early-boot / init paths (ACPI table lists,
- *   module enumeration) where allocation overhead is acceptable.
+ *   It is suitable for use during normal-context initialization paths where allocation overhead is acceptable.
  *   list_t (this header) is for hot paths - scheduler run queues, wait
  *   queues, timer lists - where allocations inside the data structure itself
  *   are a design violation.
  */
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdbool.h>
 
 /* -- Node -------------------------------------------------------------- */
@@ -36,21 +36,21 @@ typedef struct list_node {
 } list_node_t;
 
 /* Initialise a node that is not yet on any list */
-#define LIST_NODE_INIT(n) { .next = &(n), .prev = &(n) }
+#define LIST_NODE_INIT(node) {.next = &(node), .prev = &(node)}
 
-static inline void list_node_init(list_node_t *n) {
-    n->next = n;
-    n->prev = n;
+static inline void list_node_init(list_node_t *node) {
+    node->next = node;
+    node->prev = node;
 }
 
 /* -- Head (alias for node, used to make intent clear) ------------------ */
 
 typedef list_node_t list_head_t;
 
-#define LIST_HEAD_INIT(h) LIST_NODE_INIT(h)
+#define LIST_HEAD_INIT(head) LIST_NODE_INIT(head)
 
-static inline void list_head_init(list_head_t *h) {
-    list_node_init(h);
+static inline void list_head_init(list_head_t *head) {
+    list_node_init(head);
 }
 
 /* -- Entry recovery ---------------------------------------------------- */
@@ -58,46 +58,44 @@ static inline void list_head_init(list_head_t *h) {
 /*
  * list_entry - recover the pointer to the containing struct.
  *
- *   ptr    : pointer to the list_node_t member
+ *   node_pointer    : pointer to the list_node_t member
  *   type   : type of the containing struct
  *   member : name of the list_node_t member within that struct
  */
-#define list_entry(ptr, type, member) \
-    ((type *)((uintptr_t)(ptr) - offsetof(type, member)))
+#define list_entry(node_pointer, type, member)                                                     \
+    ((type *)((uintptr_t)(node_pointer) - offsetof(type, member)))
 
 /* -- Predicates -------------------------------------------------------- */
 
-static inline bool list_empty(const list_head_t *h) {
-    return h->next == h;
+static inline bool list_empty(const list_head_t *head) {
+    return head->next == head;
 }
 
 /* -- Insert / remove --------------------------------------------------- */
 
-/* Insert 'n' between 'prev' and 'next' */
-static inline void _list_insert(list_node_t *prev, list_node_t *next,
-                                 list_node_t *n)
-{
-    n->prev    = prev;
-    n->next    = next;
-    prev->next = n;
-    next->prev = n;
+/* Insert 'node' between 'prev' and 'next' */
+static inline void _list_insert(list_node_t *prev, list_node_t *next, list_node_t *node) {
+    node->prev = prev;
+    node->next = next;
+    prev->next = node;
+    next->prev = node;
 }
 
-/* Add 'n' at the front of the list headed by 'h' (new head->next) */
-static inline void list_push_front(list_head_t *h, list_node_t *n) {
-    _list_insert(h, h->next, n);
+/* Add 'node' at the front of the list headed by 'head' (new head->next) */
+static inline void list_push_front(list_head_t *head, list_node_t *node) {
+    _list_insert(head, head->next, node);
 }
 
-/* Add 'n' at the back of the list headed by 'h' (new head->prev) */
-static inline void list_push_back(list_head_t *h, list_node_t *n) {
-    _list_insert(h->prev, h, n);
+/* Add 'node' at the back of the list headed by 'head' (new head->prev) */
+static inline void list_push_back(list_head_t *head, list_node_t *node) {
+    _list_insert(head->prev, head, node);
 }
 
-/* Remove 'n' from whichever list it is on */
-static inline void list_remove(list_node_t *n) {
-    n->prev->next = n->next;
-    n->next->prev = n->prev;
-    list_node_init(n); /* leave in a safe, detached state */
+/* Remove 'node' from whichever list it is on */
+static inline void list_remove(list_node_t *node) {
+    node->prev->next = node->next;
+    node->next->prev = node->prev;
+    list_node_init(node); /* leave in a safe, detached state */
 }
 
 /* -- Pop --------------------------------------------------------------- */
@@ -106,28 +104,31 @@ static inline void list_remove(list_node_t *n) {
  * list_pop_front - remove and return the first node, or NULL if empty.
  * The returned node is in detached state (next == prev == self).
  */
-static inline list_node_t *list_pop_front(list_head_t *h) {
-    if (list_empty(h)) return NULL;
-    list_node_t *n = h->next;
-    list_remove(n);
-    return n;
+static inline list_node_t *list_pop_front(list_head_t *head) {
+    if (list_empty(head)) {
+        return NULL;
+    }
+
+    list_node_t *node = head->next;
+    list_remove(node);
+
+    return node;
 }
 
 /* -- Iteration --------------------------------------------------------- */
 
 /*
  * list_for_each - iterate over all nodes.
- * 'pos' is a list_node_t * cursor; do not modify the list inside the loop
+ * 'cursor' is a list_node_t * cursor; do not modify the list inside the loop
  * unless using list_for_each_safe.
  */
-#define list_for_each(pos, head) \
-    for ((pos) = (head)->next; (pos) != (head); (pos) = (pos)->next)
+#define list_for_each(cursor, head)                                                                \
+    for ((cursor) = (head)->next; (cursor) != (head); (cursor) = (cursor)->next)
 
 /*
- * list_for_each_safe - iteration safe against removal of 'pos' inside the
- * loop body.  'tmp' is a list_node_t * scratch variable.
+ * list_for_each_safe - iteration safe against removal of 'cursor' inside the
+ * loop body.  'next_cursor' is a list_node_t * scratch variable.
  */
-#define list_for_each_safe(pos, tmp, head) \
-    for ((pos) = (head)->next, (tmp) = (pos)->next; \
-         (pos) != (head); \
-         (pos) = (tmp), (tmp) = (pos)->next)
+#define list_for_each_safe(cursor, next_cursor, head)                                              \
+    for ((cursor) = (head)->next, (next_cursor) = (cursor)->next; (cursor) != (head);              \
+        (cursor) = (next_cursor), (next_cursor) = (cursor)->next)

@@ -1,201 +1,72 @@
 #pragma once
-
-#include <stdint.h>
-#include <kernel/mmu.h>
-#include <stdbool.h>
 #include <kernel/types.h>
-#include <kernel/msr.h>
-#include <kernel/panic.h>
 #include <kernel/list.h>
 #include <kernel/spinlock.h>
-#include <kernel/gdt.h>
+#include <kernel/irq_control.h>
+#include <kernel/boot_memory.h>
 
-extern uint64_t coreCount;
-
-/* Forward declaration - full definition in kernel/include/kernel/scheduler.h */
 struct thread;
 
-static inline uint64_t read_cr0(void) {
-    uint64_t cr0_value;
-    asm volatile("mov %%cr0, %0" : "=r" (cr0_value));
-    return cr0_value;
-}
-
-static inline uint64_t read_cr2(void) {
-    uint64_t cr2_value;
-    asm volatile("mov %%cr2, %0" : "=r" (cr2_value));
-    return cr2_value;
-}
-
-static inline uint64_t read_cr3(void) {
-    uint64_t cr3_value;
-    asm volatile("mov %%cr3, %0" : "=r" (cr3_value));
-    return cr3_value;
-}
-
-static inline uint64_t read_cr4(void) {
-    uint64_t cr4_value;
-    asm volatile("mov %%cr4, %0" : "=r" (cr4_value));
-    return cr4_value;
-}
-
-/*
- * core_t - per-CPU state structure.
- *
- * One instance per logical CPU, allocated by smp_init() in a contiguous
- * array (cpu_core_local[]).  The GS base register always points to the
- * current CPU's core_t.  Access via the this_cpu() helper.
- *
- * Ownership rules:
- *   - Fields are owned by the CPU they describe; cross-CPU reads are safe
- *     for stable fields (lapic_id, bsp).
- *   - current_thread and interrupt_depth must only be written by the
- *     owning CPU.  Another CPU may read current_thread under a lock.
- *
- * Scheduler note:
- *   current_thread is NULL while the CPU is idle.  The scheduler sets it
- *   on context switch in and clears it when the thread is descheduled.
- */
+/* TPIDR_EL1 selects immutable logical/MPIDR identity and CPU-owned IRQ/timer
+ * state. Scheduler queue/current/previous fields use the global state lock.
+ * Remote requests, online publication, and diagnostic counters use atomics.
+ * CPU hotplug and automatic thread migration are not implemented. */
 typedef struct core {
-    /*
-     * SYSCALL fast-path state.  These two fields MUST remain at byte offsets
-     * 0 and 8 within core_t -- syscall.S hardcodes %gs:0 and %gs:8.
-     *
-     * syscall_ksp:    kernel stack pointer for ring-3 -> ring-0 transitions.
-     *                 Mirrors tss.rsp0; updated by the scheduler on every
-     *                 context switch.
-     * ustack_scratch: one-word scratch cell used by the syscall entry stub
-     *                 to park the user RSP before the stack switch.
-     */
-    uintptr_t      syscall_ksp;
-    uintptr_t      ustack_scratch;
-
-    /* Stable after init - safe to read from any CPU without a lock */
-    uint32_t       lapic_id;       /* xAPIC ID of this CPU                */
-    cpu_id_t       cpu_id;         /* logical CPU index (0-based)          */
-    bool           bsp;            /* true only on the bootstrap processor */
-
-    /* Modified only by the owning CPU */
-    uint32_t       interrupt_depth; /* 0 = normal context, >0 = in IRQ handler */
-    struct thread *current_thread;  /* thread currently executing, NULL = idle */
-
-    /* Per-core run queue (owned by this CPU; see scheduler.c) */
-    list_head_t    run_queue;       /* THREAD_READY threads for this core   */
-    spinlock_t     run_queue_lock;  /* protects run_queue and state changes */
-
-    /* Idle thread: never on any run queue; switched to explicitly when the
-     * run queue is empty and no runnable thread exists.  Non-NULL after
-     * scheduler_init() returns. */
+    uint64_t hardware_id;
+    cpu_id_t cpu_id;
+    bool bsp;
+    unsigned int interrupt_depth;
+    unsigned int spinlock_depth;
+    bool reschedule_pending;
+    bool preemption_switch;
+    struct thread *current_thread;
+    list_head_t run_queue;
     struct thread *idle_thread;
-
-    /* Per-core GDT and TSS.  Filled and loaded by gdt_load_core() during
-     * core_start().  tss.rsp0 is updated by schedule() on every context
-     * switch so that ring-3 -> ring-0 transitions land on the correct stack. */
-    core_gdt_t     gdt;
-    tss_t          tss;
+    struct thread *switch_previous;
+    uintptr_t boot_stack_top;
+    unsigned int gic_target_mask;
+    bool online;
+    bool ipis_ready;
+    struct process *active_process; /* release-published after TTBR switch */
+    uint64_t timer_interval;
+    uint64_t timer_deadline;
+    uint64_t timer_ticks;
+    bool timer_running;
+    void (*timer_hook)(void *context);
+    void *timer_context;
+    unsigned long reschedule_ipis;
+    unsigned long panic_depth;
+    bool panic_stopped;
 } core_t;
 
-/* Array of all per-CPU state structs, indexed by cpu_id.  Allocated by
- * smp_init(); never freed.  Valid after smp_init() returns. */
+extern uint64_t coreCount;
 extern core_t *cpu_core_local;
 
-typedef struct cpu_info {
-	char* vendorId; /* Vendor, Ex: Intel, AMD, Qemu */
-	char* cpuName; /* The whole model name */
-	uint32_t coreCount; /* The number of cores on the CPU */
-	uint64_t cpuFeatures;
-} cpu_info_t;
+/* Valid after boot CPU initialization, before any heap or IRQ registration. */
+void arm64_cpu_initialize_boot(void);
+bool arm64_cpu_configure(const boot_memory_map_t *memory_map);
 
-extern uint32_t bsp_lapic_id;
+/* TPIDR_EL1 is kernel per-CPU storage, distinct from userspace TLS. */
+static inline core_t *this_cpu(void) {
+    core_t *cpu;
+    __asm__ volatile("mrs %0, tpidr_el1" : "=r"(cpu));
 
-/* cpu_info is populated by cpuinfo_init(); NULL before that call. */
-extern cpu_info_t *cpu_info;
-void cpuinfo_init(void);
-
-static inline bool interrupt_state(void) {
-    uint64_t flags;
-    asm volatile ("pushfq; pop %0" : "=rm"(flags) :: "memory");
-    return flags & (1 << 9);
+    return cpu;
 }
 
+/* IRQ primitives for scheduler execution; never alter other masks. */
 static inline void enable_interrupts(void) {
-    asm ("sti");
+    kernel_irq_restore(true);
 }
 
 static inline void disable_interrupts(void) {
-    asm ("cli");
+    kernel_irq_restore(false);
 }
 
-static inline bool interrupt_toggle(bool state) {
-    bool ret = interrupt_state();
-    if (state) {
-        enable_interrupts();
-    } else {
-        disable_interrupts();
-    }
-    return ret;
-}
-
-/**
- * Register layout for interrupt context.
- */
-struct regs {
-	/* Pushed by common stub */
-	uintptr_t cr2, gs, fs, es, ds;
-	uintptr_t r15, r14, r13, r12;
-	uintptr_t r11, r10, r9, r8;
-	uintptr_t rbp, rdi, rsi, rdx, rcx, rbx, rax;
-
-	/* Pushed by wrapper */
-	uintptr_t int_no, err_code;
-
-	/* Pushed by interrupt */
-	uintptr_t rip, cs, rflags, rsp, ss;
-};
-
-static inline void* read_gs_register() {
-	return (void*)rdmsr(0xC0000101);
-}
-
-static inline void set_gs_register(void* toSet) {
-    wrmsr(0xC0000101, (uint64_t)toSet);
-	wrmsr(0xC0000102, (uint64_t)toSet);
-	asm volatile ("swapgs");
-}
-
-/*
- * this_cpu - return a pointer to the calling CPU's core_t.
- *
- * Valid after smp_init() has called set_gs_register() on every core.
- * Must not be called before the BSP's core_t is set (before the early
- * set_gs_register() call in kernel.c).
- */
-static inline core_t *this_cpu(void) {
-    return (core_t *)read_gs_register();
-}
-
-/* ------------------------------------------------------------------ */
-/* IRQ control primitives                                               */
-/* ------------------------------------------------------------------ */
-
-/*
- * irq_save() / irq_restore() - explicit IRQ state management.
- *
- * Use these for non-lock critical sections that need to be
- * interrupt-safe without full mutual exclusion.
- *
- * Nesting is supported: irq_save() returns the state *before* disabling,
- * and irq_restore() re-enables only if that state was enabled.
- *
- * For mutual exclusion + IRQ safety, prefer spinlock_acquire() /
- * spinlock_release() which embed these semantics.
- */
 static inline irq_state_t irq_save(void) {
-    irq_state_t s = interrupt_state();
-    disable_interrupts();
-    return s;
+    return kernel_irq_save();
 }
 
-static inline void irq_restore(irq_state_t state) {
-    if (state) enable_interrupts();
+static inline void irq_restore(irq_state_t enabled) {
+    kernel_irq_restore(enabled);
 }

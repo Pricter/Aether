@@ -1,14 +1,7 @@
-CC      = musl-gcc
-CFLAGS  = -static -O2
-
-INIT_ELF = ../../kernel/init/init.elf
-
+# Build the normal static AArch64 musl init through the canonical root build.
+.DEFAULT_GOAL := all
 .PHONY: all clean
-
-all: $(INIT_ELF)
-
-$(INIT_ELF): init.c
-	$(CC) $(CFLAGS) -o $@ $<
-
+all:
+	$(MAKE) -C ../.. userspace
 clean:
-	rm -f $(INIT_ELF)
+	rm -f ../../build/kernel/init.elf

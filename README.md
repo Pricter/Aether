@@ -1,28 +1,17 @@
 # Aether
 
-Aether is a monolithic, internally modular x86_64 SMP kernel. It is designed for long-term growth, maintainability, correctness, and deterministic behavior.
+Aether is a monolithic, internally modular **AArch64 SMP operating system**.
+AArch64 is the sole architecture. The former x86_64 implementation, bootloader
+assets and build/test backends have been removed; their history remains in Git.
 
-This document is the primary design reference for all architectural decisions. It defines what Aether is, how it is structured, and what rules govern its construction. New subsystems, APIs, and implementation choices must be consistent with the principles stated here.
+The current target is QEMU `virt` with Cortex-A72 CPUs and GICv2. It boots one static
+musl-based init through the Linux AArch64 ABI, with private address spaces, shared
+VFS/tmpfs/devfs/pipes, TLS/SIMD preservation, and parent/child status collection.
+This is initial userspace, not a shell or a complete Linux implementation.
 
----
-
-## Table of Contents
-
-1. [Design Philosophy](#1-design-philosophy)
-2. [Architecture Overview](#2-architecture-overview)
-3. [Subsystem Rules](#3-subsystem-rules)
-4. [Concurrency and Synchronization](#4-concurrency-and-synchronization)
-5. [Memory Management](#5-memory-management)
-6. [Error Handling](#6-error-handling)
-7. [Execution Model](#7-execution-model)
-8. [Observability](#8-observability)
-9. [Userspace ABI](#9-userspace-abi)
-10. [Subsystem Roadmap](#10-subsystem-roadmap)
-11. [Current State](#11-current-state)
-12. [Building and Running](#12-building-and-running)
-13. [Vendors](#13-vendors)
-
----
+The design rules below apply to all new work. The authoritative implementation
+contracts are in [Kernel architecture](docs/kernel_architecture.md); boot/MMU/SMP
+hardware details are in [Boot and platform](docs/boot.md).
 
 ## 1. Design Philosophy
 
@@ -50,41 +39,20 @@ Small, composable abstractions are preferred over large generic frameworks. A fu
 
 ## 2. Architecture Overview
 
-Aether is a **monolithic kernel**: all subsystems run in a single privileged address space. It is **internally modular**: each subsystem has defined boundaries, a stable interface exposed through its header, and hidden internal implementation. Subsystems communicate through explicit contracts, not shared internal state.
+| Layer | Current implementation |
+|---|---|
+| Platform | ARM64 Image/DTB boot, PL011 console, PSCI, GICv2, physical timer |
+| Memory | Fallible frame allocator, shared slab heap, 4 KiB tables, demand paging |
+| Execution | Fixed-affinity preemptive SMP threads on up to eight CPUs |
+| Isolation | Private EL0 mappings; privileged shared kernel identity map |
+| ABI | Linux AArch64 syscall numbers and wire layouts, checked user copies |
+| Files | Shared VFS, tmpfs root, devfs terminal/null/zero, anonymous pipes |
+| Programs | Static AArch64 ELF, argc/argv/envp/auxv, musl TLS and allocation |
+| Lifetime | Kernel-created children, exit status, wait/WNOHANG, orphan adoption |
 
-The kernel targets **x86_64** exclusively. SMP support is a first-class design requirement, not an afterthought. All shared state must account for concurrent access from multiple cores from the moment it is introduced.
-
-The kernel is **Unix-influenced at the userspace boundary**. Process behavior, file abstractions, and syscall semantics follow POSIX-like conventions. This is an ABI and behavioral constraint, not an internal design constraint. The kernel's internal scheduler, memory manager, driver model, and IPC mechanisms are designed independently and are not required to resemble Linux or any other existing kernel internally.
-
-### Address Space Layout
-
-| Region | Range | Contents |
-|--------|-------|----------|
-| Higher half kernel | `0xffffffff80000000` | Kernel text, rodata, data, bss |
-| Physical memory map | `0xffff800000000000` | Direct-mapped physical memory |
-| User space | `0x0000000000000000` - `0x00007fffffffffff` | Per-process user mappings |
-
-### Subsystem Dependency Order
-
-Subsystems are layered. Higher layers may depend on lower layers; lower layers must not depend on higher layers. Cross-layer coupling must go through explicit interfaces.
-
-```
-[ hardware / ACPI / CPUID ]
-        |
-[ PMM -> VMM -> Slab allocator ]
-        |
-[ GDT / IDT / LAPIC / HPET / SMP ]
-        |
-[ ELF / Panic / Logging / ktest ]
-        |
-[ Scheduler / Process model / Syscall ABI / ELF loader ]
-        |
-[ VFS / Drivers ]                      <- VFS stable; pipes done; disk driver not started
-        |
-[ Userspace ]                          <- static ELF init running; fork/exec not yet implemented
-```
-
----
+User mappings occupy `[0x10000, 0x08000000)`. Kernel RAM remains identity-mapped
+and privileged. This transitional layout is limited to 128 MiB of user virtual
+addresses; a higher-half layout and ASID allocation remain future work.
 
 ## 3. Subsystem Rules
 
@@ -140,7 +108,7 @@ The `spinlock_acquire()` primitive saves and disables interrupts on entry and re
 
 ### SMP
 
-Per-core state is accessed through the GS segment base register (`core_t __seg_gs`). Global shared state must be synchronized. Kernel code must not assume it runs on a specific core unless it has explicitly pinned itself.
+Per-core state is accessed through `this_cpu()`: TPIDR_EL1 on ARM. Global shared state must be synchronized. Kernel code must not assume it runs on a specific core unless it has explicitly pinned itself.
 
 ---
 
@@ -156,7 +124,7 @@ Memory management in Aether follows strict ownership rules. Every allocation has
 | Virtual | VMM page tables | 4 KiB pages | Tied to address space |
 | Kernel heap | Slab allocator | 8 B - 2 KiB + large | Explicit: caller frees |
 
-`malloc()` / `free()` are the general kernel heap interface. They are backed by the slab allocator for small objects and fall through to the VMM for large allocations.
+`malloc()` / `free()` are the general kernel heap interface. They are backed by the slab allocator for small objects and use contiguous frames through the shared page backend for large allocations.
 
 ### Ownership Rules
 
@@ -168,7 +136,7 @@ Memory management in Aether follows strict ownership rules. Every allocation has
 
 4. **Every allocation has a cleanup path.** Allocations made during subsystem initialization must have a corresponding teardown path, even if teardown is not currently exercised. Designing without a cleanup path creates permanent resource leaks.
 
-5. **Reclaimed memory is gone.** Limine-provided pages (kernel image, module data, ACPI tables) are valid only until `clean_reclaimable_memory()` is called. Any data needed beyond that point must be copied to the heap before reclaim.
+5. **Live boot objects remain reserved.** The kernel image, stacks, DTB and frame metadata must stay outside allocatable RAM until their owners explicitly release them.
 
 ---
 
@@ -212,217 +180,105 @@ Normal operational failures (OOM for user memory, invalid syscall arguments, bad
 
 ## 7. Execution Model
 
-### Current State
+The boot CPU discovers memory/CPUs through the DTB and starts secondaries with
+PSCI. Every CPU owns a fixed run queue, idle thread, GIC private interface, and
+physical timer. TPIDR_EL1 identifies CPU storage; TPIDR_EL0 belongs to userspace
+TLS. Integer and FP/SIMD state survive preemption.
 
-The kernel initializes all subsystems on the BSP (Bootstrap Processor), brings secondary processors online through LAPIC INIT/SIPI, and runs a preemptive SMP scheduler. Each core runs independent threads driven by LAPIC timer ticks. Kernel threads can block on wait queues and are cleaned up by a dedicated reaper thread. A process model with VMA-based address space management, demand paging, and mmap/munmap/mprotect support is implemented. Static ELF64 binaries are loaded and executed as user processes via a SYSCALL/SYSRET syscall path with 16 implemented syscalls.
+One scheduler-state lock protects lifecycle and queue membership. No lock crosses
+a physical stack switch. The incoming stack publishes the previous context as
+off-CPU before it can run elsewhere or be reclaimed. A CPU-0 reaper frees thread
+stacks/descriptors and completes processes only after their last thread is gone.
 
-### Intended Model
+Loaded processes currently have one user thread. The kernel can create a child
+with inherited open descriptions; wait consumes a completed child's status and
+address space. User `fork`, `clone`, `execve`, signals and pthreads are not yet
+implemented. Automatic load balancing and CPU hotplug are also future work.
 
-The execution model is built around **processes** and **kernel threads**.
+## 8. Observability and Testing
 
-- A **process** is the unit of isolation. It owns a virtual address space, a file descriptor table, and a set of threads. Processes are isolated from each other through the MMU.
-- A **kernel thread** is the unit of scheduling. Each thread has its own kernel stack, register state, and scheduling context.
-- The **scheduler** is preemptive, SMP-aware, and operates on per-core run queues. Load balancing is explicit and governed by defined policy, not emergent behavior.
-- **Per-core structures** (`core_t`) hold the current thread pointer, local interrupt state, LAPIC ID, and other execution context. They are accessed lock-free through GS.
-
-### Kernel Thread Rules
-
-- Kernel threads may sleep, block on locks, and perform long-running operations.
-- Interrupt handlers are not kernel threads. They run in interrupt context, must be short, and must not block.
-- The scheduling boundary is explicit: a thread yields at defined preemption points or system call returns, not at arbitrary points in kernel code.
-
----
-
-## 8. Observability
-
-Observability is a first-class architectural concern. Every major subsystem must eventually expose diagnostics, statistics, and testability hooks.
-
-### Panic Subsystem
-
-The panic subsystem provides unified fatal error reporting with:
-
-- Atomic SMP ownership (one CPU renders, all others halt).
-- Depth-gated rendering: full diagnostics at depth 1, serial-only emergency at depth 2, immediate halt at depth >= 3.
-- Full register dump, decoded exception info, and stack trace with resolved symbols.
-- CPU info, kernel version, and build metadata.
-- No dependency on `kprintf` or any spinlock - output goes directly to flanterm and COM1.
-
-### Logging
-
-`klog(severity, subsystem, fmt, ...)` provides structured kernel logging with severity levels `DEBUG`, `INFO`, `WARN`, `ERROR`. Shorthands: `KINFO`, `KWARN`, `KERROR`, `KDEBUG`.
-
-### Test Framework
-
-The kernel includes a built-in test framework (`ktest`) that runs inside the kernel itself at boot, controlled via the Limine kernel cmdline and build flags.
-
-**Registration** is automatic through the `.ktest` ELF section - no central registry is needed:
-
-```c
-static void test_example(ktest_ctx_t *ctx) {
-    void *p = malloc(64);
-    KT_ASSERT_NONNULL(p);
-    free(p);
-}
-
-KTEST("example", "memory", "malloc returns non-NULL", KT_FLAG_CRITICAL, test_example);
-```
-
-**Expected-panic tests** allow validating panic paths without halting:
-
-```c
-KT_EXPECT_PANIC(ctx, "assertion failed") {
-    KERNEL_ASSERT(1 == 2);
-}
-KT_EXPECT_PANIC_VERIFY(ctx);
-```
-
-**Make targets:**
-
-| Target | Runs |
-|--------|------|
-| `make test` | All non-destructive, non-stress tests |
-| `make test-critical` | Critical tests only |
-| `make test-memory` | Memory subsystem tests |
-| `make test-panic` | Expected-panic tests |
-| `make test-smp` | SMP and IRQ tests |
-| `make stress` | Long-running stress tests |
-| `make test-filter TEST_FILTER=x` | Tests whose name contains `x` |
-
-Tests communicate results to CI through the QEMU `isa-debug-exit` device: exit code 1 = all passed, any other code = failure.
-
----
+Normal boot initializes the system and launches one init, without running tests.
+`make test` builds separate images in `build/tests/` to validate scheduling,
+memory permissions, remote TLB revocation and real musl programs. Two test-only
+parent/child waves run on every CPU, checking stable frame counts after warmup. Separate negative images cover fatal kernel paths.
+Native parser, allocator and memory-operation tests complement the VM checks. Fatal diagnostics retain
+allocation-free, lock-free serial output with atomic SMP ownership.
 
 ## 9. Userspace ABI
 
-### Compatibility Goal
+The compatibility target is **Linux AArch64**, using `SVC #0`, x8 for the syscall
+number, x0–x5 for arguments and x0 for the result. Errors are negative Linux errno
+values. The kernel exposes the Linux AArch64 layouts, including 128-byte `stat`.
 
-The long-term goal is to run unmodified Linux x86_64 binaries and libraries (musl, glibc) without a translation layer. This is a hard design constraint that must be honoured from the start -- retrofitting ABI compatibility after a divergent interface is built is not feasible.
+Implemented groups include file/descriptor I/O, positioned/vector I/O, directory
+entries, path operations, pipes and nonblocking flags, anonymous memory,
+identity/time, TLS support, exit and child waiting. Unsupported syscalls return
+`-ENOSYS`; unsupported signal operations do not pretend to install handlers.
+See [ABI and limitations](docs/kernel_architecture.md#linux-aarch64-abi).
 
-This means:
+## 10. Next Milestones
 
-- **Syscall numbers match Linux exactly** (x86_64 -- `read=0`, `write=1`, `open=2`, ...).
-- **Syscall entry via `SYSCALL`/`SYSRET`**, not `INT 0x80`.
-- **All structs exposed to userspace** (`stat`, `timespec`, `iovec`, `sigaction`, signal numbers, `mmap`/`open` flag values, `errno` values) must match Linux layouts byte-for-byte.
-- **Dynamic linking must work**: the ELF loader must handle `PT_INTERP` so that `ld-linux.so` or musl's dynamic linker can be loaded. Without this only static binaries run.
+- User-driven process creation and image replacement: fork/clone/execve.
+- Signals, cancellation, futexes and pthread lifecycle.
+- Higher-half kernel mapping, larger user address spaces and ASIDs.
+- Storage/persistence, terminal input, and an interactive shell.
+- A selected physical ARM board's boot, interrupt and device drivers.
 
-The minimum syscall surface to run a musl-linked binary is approximately: `read`, `write`, `open`, `close`, `exit`, `exit_group`, `mmap`, `munmap`, `mprotect`, `brk`, `fstat`, `ioctl`, `getpid`, `uname`, `writev`, `arch_prctl` (TLS setup).
+## 11. Building and Running
 
-The kernel's internal design (scheduler, VFS, memory manager) is unconstrained. The ABI surface is the contract; everything below it is free.
-
-### ABI Surface
-
-- **Syscall interface** using the x86_64 System V ABI calling convention, Linux-compatible syscall numbering.
-- **Process lifecycle**: `fork`, `exec`, `exit`, `wait` semantics.
-- **File descriptor model** over a virtual filesystem abstraction.
-- **Signal delivery** with standard Unix signal semantics and `sigaction` layout.
-- **Memory mapping** via `mmap`/`munmap` with `MAP_ANONYMOUS` and file-backed mappings.
-
----
-
-## 10. Subsystem Roadmap
-
-Milestones are listed in dependency order. Each milestone should produce a clean, testable subsystem before the next begins.
-
-| # | Milestone | Status | Key Deliverables |
-|---|-----------|--------|-----------------|
-| 1 | **Scheduler and kernel threading** | Done | Preemptive SMP scheduler, per-core run queues, kernel thread lifecycle, context switch |
-| 2 | **Process abstraction** | Done | Process struct, VMA-based address space, demand paging, mmap/munmap/mprotect, process lifecycle |
-| 3 | **Syscall ABI** | Done | SYSCALL/SYSRET dispatch, user/kernel boundary, argument validation, 42 Linux-ABI syscalls (read/write/open/close/stat/fstat/lseek/mmap/mprotect/munmap/brk/ioctl/dup/dup2/dup3/pipe/pipe2/getdents64/openat/newfstatat/mkdir/rmdir/rename/unlink/truncate/ftruncate/chdir/getcwd/clock_gettime/prlimit64/arch_prctl/...) |
-| 4 | **Virtual filesystem** | Stable | VFS layer, fd table, full path resolution, tmpfs at `/`, devfs at `/dev` (`null`, `zero`, `tty`); stdin/stdout/stderr wired; `stat`/`getdents64`/`dup`/`dup2`/`dup3`/`pipe`/`pipe2`/`mkdir`/`rmdir`/`rename`/`unlink`/`truncate`/`chdir`/`getcwd` all done; **remaining: disk driver + ext2** |
-| 5 | **Initial userspace** | Partial | Static ELF64 loader done; init process running; VFS live; **blocked on `fork`/`execve`/`wait4`/signal delivery** — no process spawning yet |
-| 6 | **Device and driver framework** | Not started | Driver registration model, character device interface, keyboard/storage drivers |
-| 7 | **IPC and synchronization** | Partial | Pipes done (anonymous byte streams, blocking I/O); **remaining: signals, futex WAIT/WAKE, shared memory, sockets** |
-| 8 | **Networking** | Not started | Network stack, socket interface, TCP/IP |
-| 9 | **Advanced VM** | Not started | Copy-on-write, page reclaim, huge pages |
-| 10 | **POSIX userspace** | Not started | Port of a shell, coreutils, eventually GNU toolchain |
-
----
-
-## 11. Current State
-
-| Subsystem | Status | Notes |
-|-----------|--------|-------|
-| Physical memory manager (PMM) | Stable | Bitmap allocator, contiguous frame support |
-| Virtual memory manager (VMM) | Stable | Kernel page tables, HHDM, user pagemaps |
-| Slab allocator | Stable | Fixed-size caches, large-object fallthrough |
-| GDT | Stable | Per-core GDT + TSS; rsp0 updated on every context switch |
-| IDT / ISR dispatch | Stable | Dynamic IRQ allocation (vectors 32-254), SMP halt vector |
-| LAPIC / IOAPIC | Stable | Timer, IPI, SMP bringup |
-| HPET | Stable | Used for LAPIC calibration |
-| SMP bringup | Stable | All APs reach idle, per-core GS |
-| ACPI parsing | Stable | MADT, HPET table |
-| ELF symbol resolution | Stable | O(log n) address lookup, section traversal |
-| Panic subsystem | Stable | Full diagnostics, SMP freeze, depth gating |
-| Structured logging | Stable | `klog` with severity levels |
-| Test framework (ktest) | Stable | 186 tests across 10 subsystems, CI-ready QEMU exit code |
-| Scheduler | Stable | Round-robin SMP, thread_block, idle threads, reaper |
-| Process model | Stable | VMA management, demand paging, mmap/munmap/mprotect |
-| Syscall ABI | Stable | SYSCALL/SYSRET, 42 Linux-ABI syscalls; complete VFS surface (open/read/write/stat/getdents/dup/pipe/mkdir/chdir/...); clock_gettime, prlimit64, arch_prctl; **missing: fork/execve/wait4/signals/futex WAIT+WAKE** |
-| ELF loader | Stable | Static ELF64, init user process spawned at boot; no PT_INTERP / dynamic linking yet |
-| VFS | Stable | Inode/file/fd abstraction; tmpfs (full read/write, dirs, rename, truncate); devfs (null/zero/tty); anonymous pipes; per-process cwd; **remaining: disk driver + ext2** |
-| Pipes | Stable | Anonymous byte streams; 4 KiB ring buffer; blocking read/write; pipe/pipe2 syscalls wired |
-| Drivers | Not started | No keyboard, no storage, no PCI enumeration |
-
----
-
-## 12. Building and Running
-
-### Requirements
-
-- `gcc` (primary compiler; clang may work but is not actively maintained)
-- `ld` (GNU linker)
-- `git`
-- `xorriso`
-- `qemu-system-x86_64` (for running)
-
-### Build
+Requirements: Clang with AArch64 support, LLVM LLD, QEMU AArch64, Python 3, and Zig
+with bundled musl for cross-building userspace. Zig caches stay under `build/`.
+Set `CC`, `LD`, `QEMU`, or `ZIG` to override tools. `CC` defaults to Clang targeting
+`aarch64-none-elf`; the linker must support AArch64 ELF.
 
 ```sh
-# Build and run (BIOS boot)
-make run
-
-# Build and run (UEFI boot)
-make run-uefi
-
-# Build kernel only
-make kernel
+make                         # normal ARM Image, symbols and static musl init
+make run                     # QEMU, four CPUs
+make run CPUS=8
+make test                    # full required ARM + native regression suite
+make check-arm64-user        # userspace/kernel matrix: 1/2/4/8 CPUs
+make check-fs-syscalls        # alias for the ARM userspace matrix
+make userspace               # build only the ARM init ELF
+make clean                   # remove normal/test ARM outputs, retain compiler caches
 ```
 
-### Testing
+Normal outputs are `build/kernel/Image`, `kernel.elf`, and `init.elf`. A normal
+boot prints `Aether init: ARM64 userspace ready.` once, then `Init exited. System
+idle.` Tests never overwrite these outputs: they have their own kernel and musl
+regression image under `build/tests/`. The interactive console uses a
+132-column × 40-line QEMU window with zoom-to-fit.
 
-```sh
-# Run full test suite
-make test
+## 12. Source Layout
 
-# Run specific category
-make test-critical
-make test-memory
-make test-panic
-make test-smp
+ARM is integrated directly into the kernel rather than maintained as a side port:
 
-# Run tests matching a name substring
-make test-filter TEST_FILTER=slab
-```
+| Path | Responsibility |
+|---|---|
+| `kernel/kernel.c`, `kernel/boot/` | Entry, device-tree discovery, boot reservations |
+| `kernel/sys/` | CPUs, interrupts, SMP, scheduling, syscalls, ELF and startup |
+| `kernel/memory/` | Frames, page tables, user mappings, stacks and heap |
+| `kernel/debug/` | Fatal exception and panic reporting |
+| `kernel/time/` | Architectural timer and monotonic clock |
+| `kernel/fs/` | VFS, tmpfs, devfs, pipes and mount initialization |
+| `kernel/platform/qemu-virt/` | QEMU-specific PL011 serial console |
+| `kernel/include/kernel/` | Canonical kernel interfaces |
+| `kernel/test/`, `userspace/tests/` | Explicit self-test workloads |
+| `userspace/init/` | The single normal static musl init |
 
-The test kernel is compiled separately with `-DKTEST_ENABLED`. The main kernel build is not affected.
+`kernel/build.mk` owns the source lists and normal/test build isolation. Direct
+`make -C kernel` and `make -C userspace/init` forward to the root build. Hardware
+functions retain ARM-specific names where that identifies their ISA contract;
+there are no alternate-architecture branches or legacy build targets.
 
-### Limine cmdline flags (test mode)
+For source debugging, run `make run QEMU_DEBUG="-S -s"`, then attach an
+AArch64-capable GDB using `util/debug.sh` (override its `GDB` environment variable
+when needed). Symbols are in `build/kernel/kernel.elf`.
 
-| Flag | Effect |
-|------|--------|
-| `ktest` | Enable test runner (all non-stress tests) |
-| `ktest=critical` | Critical tests only |
-| `ktest=panic` | Panic-validation tests only |
-| `ktest=stress` | Stress tests |
-| `ktest.sub=memory` | Filter by subsystem |
-| `ktest.filter=name` | Filter by name substring |
-| `ktest.headless` | Serial-only output |
-| `ktest.ci` | Write QEMU isa-debug-exit result |
+## Code style
 
----
-
-## 13. Vendors
-
-- [Flanterm](https://github.com/mintsuki/flanterm) - framebuffer terminal
-- [printf](https://github.com/eyalroz/printf) - freestanding printf implementation
-- [Limine](https://github.com/limine-bootloader/limine) - bootloader
+Run `make format` before submitting C/header changes and `make check-format` to
+verify formatting. These commands use `.clang-format`; set `CLANG_FORMAT` if LLVM
+is not on your PATH. Use descriptive variable names, named ABI/hardware constants,
+and comments explaining function contracts and non-obvious ownership or ordering.
+See [source formatting and constants](docs/kernel_architecture.md#source-formatting-and-constants)
+for the precise scope and subsystem boundaries.

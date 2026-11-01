@@ -1,11 +1,12 @@
 #pragma once
 
-#include <stdint.h>
 #include <stddef.h>
+#include <memory.h>
 
-size_t strlen(const char* s);
-int strcmp(const char* s1, const char* s2);
-int strncmp(const char* s1, const char* s2, size_t n);
-const char* strstr(const char* haystack, const char* needle);
-char* strctrim(const char* s, char c);
-char* strdup(const char* s);
+/* Freestanding string subset implemented by kernel/libc/strings.c.
+ * strdup allocates caller-owned kernel heap storage and returns NULL on OOM;
+ * the other operations borrow their input and never allocate or lock. */
+size_t strlen(const char *string);
+int strcmp(const char *left, const char *right);
+int strncmp(const char *left, const char *right, size_t length);
+char *strdup(const char *string);

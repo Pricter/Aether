@@ -1,257 +1,321 @@
-/*
- * slab.c - kernel slab allocator
- *
- * Small allocations (<= SLAB_MAX_SIZE) come from per-size-class caches.
- * Each cache manages a linked list of 4 KiB pages; objects within a page
- * form an embedded free-list.  When a page is exhausted a new one is
- * allocated from the PMM and prepended to the cache's list.
- *
- * Large allocations (> SLAB_MAX_SIZE) are served directly from the PMM;
- * a small header at the start of the first page stores the allocation
- * metadata so free() can release the right number of frames.
- *
- * free() identifies the allocation type by a magic value stored at the
- * start of every managed page.
- */
-
-#include <kernel/mmu.h>
+/* Shared heap: allocation policy is independent of physical RAM addressing.
+ * Cache locks may acquire the page backend lock; the reverse is forbidden.
+ * Empty slab pages stay owned by their caches for the kernel lifetime. */
+#include <kernel/heap.h>
+#include <kernel/page_memory.h>
 #include <kernel/spinlock.h>
-#include <kernel/macros.h>
+#include <kernel/irq_control.h>
 #include <kernel/panic.h>
 #include <stdint.h>
-#include <stddef.h>
 #include <stdbool.h>
 
-/* -- Magic numbers ------------------------------------------------------ */
+#define SLAB_MAGIC 0x514b3a00U
+#define LARGE_MAGIC 0xb16a7e00U
+#define SLAB_MAX_SIZE 2048UL
 
-#define SLAB_MAGIC  ((uint32_t)0x514B3A00)
-#define LARGE_MAGIC ((uint32_t)0xB16A7E00)
-
-/* -- Per-page header for slab pages ------------------------------------ */
-
+struct slab_cache;
 struct slab_page {
-    uint32_t           magic;     /* SLAB_MAGIC                       */
-    uint16_t           inuse;     /* objects currently allocated       */
-    uint16_t           capacity;  /* total objects this page can hold  */
-    struct slab_cache *cache;     /* owning cache                      */
-    struct slab_page  *next;      /* next page in cache list           */
-    void             **freelist;  /* head of embedded free-object list */
+    uint32_t magic;
+    uint16_t inuse;
+    uint16_t capacity;
+    struct slab_cache *cache;
+    struct slab_page *next;
+    void **freelist;
+    /* At most 500 eight-byte slots fit; these bits detect invalid/double frees. */
+    uint64_t allocated_slots[8];
 };
-/* sizeof == 4+2+2+8+8+8 = 32 bytes; objects start at offset 32 */
-
-/* -- Per-size-class cache ----------------------------------------------- */
 
 struct slab_cache {
-    spinlock_t        lock;
-    struct slab_page *pages;     /* list of pages, newest at head     */
-    size_t            obj_size;
+    spinlock_t lock;
+    struct slab_page *pages;
+    size_t object_size;
 };
 
-/* -- Header for large (non-slab) allocations --------------------------- */
-
-struct large_hdr {
-    uint32_t magic;   /* LARGE_MAGIC                                   */
-    uint32_t _pad;
-    size_t   pages;   /* number of physical frames backing this alloc  */
-    size_t   size;    /* original requested size                        */
+struct large_header {
+    uint32_t magic;
+    uint32_t padding;
+    size_t pages;
+    size_t size;
 };
-/* sizeof == 4+4+8+8 = 24 bytes; user data starts at offset 24 */
-
-/* -- Size classes ------------------------------------------------------- */
-
-#define SLAB_MAX_SIZE 2048u
 
 static struct slab_cache caches[] = {
-    { SPINLOCK_ZERO, NULL,    8 },
-    { SPINLOCK_ZERO, NULL,   16 },
-    { SPINLOCK_ZERO, NULL,   32 },
-    { SPINLOCK_ZERO, NULL,   64 },
-    { SPINLOCK_ZERO, NULL,  128 },
-    { SPINLOCK_ZERO, NULL,  256 },
-    { SPINLOCK_ZERO, NULL,  512 },
-    { SPINLOCK_ZERO, NULL, 1024 },
-    { SPINLOCK_ZERO, NULL, 2048 },
+    {SPINLOCK_ZERO, NULL, 8},
+    {SPINLOCK_ZERO, NULL, 16},
+    {SPINLOCK_ZERO, NULL, 32},
+    {SPINLOCK_ZERO, NULL, 64},
+    {SPINLOCK_ZERO, NULL, 128},
+    {SPINLOCK_ZERO, NULL, 256},
+    {SPINLOCK_ZERO, NULL, 512},
+    {SPINLOCK_ZERO, NULL, 1024},
+    {SPINLOCK_ZERO, NULL, 2048},
 };
 
-#define NCACHES (sizeof(caches) / sizeof(caches[0]))
+static bool heap_ready;
 
+/* Reject heap work in IRQ context before taking locks or touching freelists. */
+static void require_heap_context(void) {
+    if (kernel_interrupt_depth()) {
+        SUBSYS_PANIC("slab", "allocation in interrupt context");
+    }
+
+    if (!heap_ready) {
+        SUBSYS_PANIC("slab", "heap used before initialization");
+    }
+}
+
+/* Choose the smallest class that can contain the requested payload. */
 static struct slab_cache *cache_for(size_t size) {
-    for (size_t i = 0; i < NCACHES; i++)
-        if (caches[i].obj_size >= size)
-            return &caches[i];
+    for (size_t cache_index = 0; cache_index < sizeof(caches) / sizeof(caches[0]); ++cache_index) {
+        if (caches[cache_index].object_size >= size) {
+            return &caches[cache_index];
+        }
+    }
+
     return NULL;
 }
 
-/* -- Slab page management ----------------------------------------------- */
-
+/* Borrow a page from the backend and transfer ownership to the locked cache.
+ * Allocation failure returns NULL without changing the cache's page chain. */
 static struct slab_page *slab_new_page(struct slab_cache *cache) {
     KERNEL_ASSERT(spinlock_is_held(&cache->lock));
-    uintptr_t frame = mmu_request_frame();
-    struct slab_page *pg = (struct slab_page *)(frame + HHDM_HIGHER_HALF);
 
-    size_t hdr      = sizeof(struct slab_page);           /* 32 */
-    size_t avail    = PAGE_SIZE - hdr;
-    size_t cap      = avail / cache->obj_size;
+    paddr_t physical_address;
 
-    pg->magic    = SLAB_MAGIC;
-    pg->inuse    = 0;
-    pg->capacity = (uint16_t)cap;
-    pg->cache    = cache;
-    pg->next     = cache->pages;
-    cache->pages = pg;
-
-    /* Build the embedded free-list: each free object's first word points
-     * to the next free object; the last points to NULL.               */
-    uintptr_t base = (uintptr_t)pg + hdr;
-    pg->freelist   = (void **)base;
-
-    for (size_t i = 0; i < cap - 1; i++) {
-        void **cur  = (void **)(base + i * cache->obj_size);
-        void **next = (void **)(base + (i + 1) * cache->obj_size);
-        *cur = next;
+    if (!page_memory_allocate(1, &physical_address)) {
+        return NULL;
     }
-    *(void **)(base + (cap - 1) * cache->obj_size) = NULL;
 
-    return pg;
+    struct slab_page *page = page_memory_pointer(physical_address);
+    __builtin_memset(page, 0, sizeof(*page));
+    page->magic = SLAB_MAGIC;
+    page->capacity = (KERNEL_PAGE_SIZE - sizeof(*page)) / cache->object_size;
+    page->cache = cache;
+    page->next = cache->pages;
+
+    uintptr_t object_base = (uintptr_t)page + sizeof(*page);
+    page->freelist = (void **)object_base;
+
+    for (size_t slot_index = 0; slot_index < page->capacity; ++slot_index) {
+        void **slot = (void **)(object_base + slot_index * cache->object_size);
+        *slot = slot_index + 1 == page->capacity
+                    ? NULL
+                    : (void *)(object_base + (slot_index + 1) * cache->object_size);
+    }
+
+    cache->pages = page;
+
+    return page;
 }
 
-/* -- Slab alloc / free -------------------------------------------------- */
+/* Validate exact object boundaries before accessing ownership bits. */
+static size_t slab_slot_index(const struct slab_page *page, const void *address) {
+    uintptr_t object_base = (uintptr_t)page + sizeof(*page);
+    uintptr_t object_address = (uintptr_t)address;
 
-static void *slab_alloc(struct slab_cache *cache) {
-    bool s = spinlock_acquire(&cache->lock);
+    if (object_address < object_base || (object_address - object_base) % page->cache->object_size) {
+        SUBSYS_PANIC("slab", "invalid slab object address");
+    }
 
-    /* Find a page with free slots; pages list is short (usually 1). */
-    struct slab_page *pg = cache->pages;
-    while (pg && !pg->freelist)
-        pg = pg->next;
+    size_t slot_index = (object_address - object_base) / page->cache->object_size;
 
-    if (!pg)
-        pg = slab_new_page(cache);
+    if (slot_index >= page->capacity) {
+        SUBSYS_PANIC("slab", "slab object outside capacity");
+    }
 
-    void **obj   = pg->freelist;
-    pg->freelist = *obj;
-    pg->inuse++;
-
-    spinlock_release(&cache->lock, s);
-
-    __builtin_memset(obj, 0, cache->obj_size);
-    return obj;
+    return slot_index;
 }
 
-static void slab_do_free(struct slab_page *pg, void *addr) {
-    struct slab_cache *cache = pg->cache;
-    bool s = spinlock_acquire(&cache->lock);
+/* Find a free slot, update ownership while locked, then zero the private object. */
+static void *slab_allocate(struct slab_cache *cache) {
+    bool interrupts_enabled = spinlock_acquire(&cache->lock);
+    struct slab_page *page = cache->pages;
 
-    void **obj   = addr;
-    *obj         = pg->freelist;
-    pg->freelist = obj;
-    pg->inuse--;
+    while (page && !page->freelist) {
+        page = page->next;
+    }
 
-    spinlock_release(&cache->lock, s);
+    if (!page) {
+        page = slab_new_page(cache);
+    }
+
+    if (!page) {
+        spinlock_release(&cache->lock, interrupts_enabled);
+
+        return NULL;
+    }
+
+    void **object = page->freelist;
+
+    size_t slot_index = slab_slot_index(page, object);
+    uint64_t slot_mask = 1ULL << (slot_index % 64);
+    KERNEL_ASSERT(!(page->allocated_slots[slot_index / 64] & slot_mask));
+    page->allocated_slots[slot_index / 64] |= slot_mask;
+    page->freelist = *object;
+    ++page->inuse;
+    spinlock_release(&cache->lock, interrupts_enabled);
+    __builtin_memset(object, 0, cache->object_size);
+
+    return object;
 }
 
-/* -- Large allocation helpers ------------------------------------------- */
+/* Reject a second release before linking the object back into the free list. */
+static void slab_release(struct slab_page *page, void *address) {
+    struct slab_cache *cache = page->cache;
+    bool interrupts_enabled = spinlock_acquire(&cache->lock);
+    size_t slot_index = slab_slot_index(page, address);
+    uint64_t slot_mask = 1ULL << (slot_index % 64);
 
-static void *large_alloc(size_t size) {
-    size_t page_count = (sizeof(struct large_hdr) + size + PAGE_SIZE - 1) / PAGE_SIZE;
-    uintptr_t phys    = mmu_request_frames((uint64_t)page_count);
-    struct large_hdr *hdr = (struct large_hdr *)(phys + HHDM_HIGHER_HALF);
+    if (!(page->allocated_slots[slot_index / 64] & slot_mask)) {
+        SUBSYS_PANIC("slab", "double free of slab object");
+    }
 
-    hdr->magic = LARGE_MAGIC;
-    hdr->_pad  = 0;
-    hdr->pages = page_count;
-    hdr->size  = size;
-
-    void *data = hdr + 1;
-    __builtin_memset(data, 0, size);
-    return data;
+    page->allocated_slots[slot_index / 64] &= ~slot_mask;
+    void **object = address;
+    *object = page->freelist;
+    page->freelist = object;
+    --page->inuse;
+    spinlock_release(&cache->lock, interrupts_enabled);
 }
 
-/* -- Public allocator interface ----------------------------------------- */
+/* Check arithmetic before rounding up the header and payload to whole pages. */
+static size_t large_page_count(size_t size) {
+    if (size > (size_t)-1 - sizeof(struct large_header) - (KERNEL_PAGE_SIZE - 1)) {
+        return 0;
+    }
 
+    return (sizeof(struct large_header) + size + KERNEL_PAGE_SIZE - 1) / KERNEL_PAGE_SIZE;
+}
+
+/* Large payloads own contiguous frames until free or a successful moving realloc. */
+static void *large_allocate(size_t size) {
+    size_t page_count = large_page_count(size);
+    paddr_t physical_address;
+
+    if (!page_count || !page_memory_allocate(page_count, &physical_address)) {
+        return NULL;
+    }
+
+    struct large_header *header = page_memory_pointer(physical_address);
+    *header = (struct large_header){LARGE_MAGIC, 0, page_count, size};
+    void *payload = header + 1;
+    __builtin_memset(payload, 0, size);
+
+    return payload;
+}
+
+/* Transfer a zeroed object to the caller, preserving minimum-size semantics. */
 void *malloc(size_t size) {
-    if (size == 0) size = 1;
+    require_heap_context();
+
+    if (!size) {
+        size = 1;
+    }
 
     struct slab_cache *cache = cache_for(size);
-    if (cache)
-        return slab_alloc(cache);
 
-    return large_alloc(size);
+    return cache ? slab_allocate(cache) : large_allocate(size);
 }
 
-void free(void *addr) {
-    if (!addr) return;
+/* Invalidate large-allocation metadata before returning its pages to the backend. */
+static void large_release(struct large_header *header, void *address) {
+    KERNEL_ASSERT(address == (void *)(header + 1));
 
-    uintptr_t page_base = (uintptr_t)addr & ~(uintptr_t)(PAGE_SIZE - 1);
-    uint32_t  magic     = *(uint32_t *)page_base;
+    size_t page_count = header->pages;
+    header->magic = 0;
 
-    if (magic == SLAB_MAGIC) {
-        slab_do_free((struct slab_page *)page_base, addr);
+    if (!page_memory_release(page_memory_physical(header), page_count)) {
+        SUBSYS_PANIC("slab", "large allocation frame release failed");
+    }
+}
+
+/* Free only the exact caller-owned object; a null pointer is always harmless. */
+void free(void *address) {
+    if (!address) {
         return;
     }
 
-    if (magic == LARGE_MAGIC) {
-        struct large_hdr *hdr = (struct large_hdr *)page_base;
-        mmu_free_frames((void *)(page_base - HHDM_HIGHER_HALF), (uint64_t)hdr->pages);
-        return;
-    }
+    require_heap_context();
 
-    SUBSYS_PANIC("slab", "free: corrupt page magic - double-free or bad pointer");
-}
-
-void *realloc(void *addr, size_t new_size) {
-    if (!addr)     return malloc(new_size);
-    if (!new_size) { free(addr); return NULL; }
-
-    uintptr_t page_base = (uintptr_t)addr & ~(uintptr_t)(PAGE_SIZE - 1);
-    uint32_t  magic     = *(uint32_t *)page_base;
+    uintptr_t page_base = (uintptr_t)address & ~(KERNEL_PAGE_SIZE - 1);
+    uint32_t magic = *(uint32_t *)page_base;
 
     if (magic == SLAB_MAGIC) {
-        struct slab_page *pg = (struct slab_page *)page_base;
-        /* Still fits in the same slab slot - nothing to do. */
-        if (new_size <= pg->cache->obj_size)
-            return addr;
-        /* Needs a larger slot or a large alloc. */
-        void *newp = malloc(new_size);
-        if (!newp) return NULL;
-        __builtin_memcpy(newp, addr, pg->cache->obj_size);
-        slab_do_free(pg, addr);
-        return newp;
+        slab_release((struct slab_page *)page_base, address);
+    } else if (magic == LARGE_MAGIC) {
+        large_release((struct large_header *)page_base, address);
+    } else {
+        SUBSYS_PANIC("slab", "free: corrupt page magic - double-free or bad pointer");
+    }
+}
+
+/* Moving realloc transfers ownership only after replacement allocation succeeds. */
+void *realloc(void *address, size_t new_size) {
+    require_heap_context();
+
+    if (!address) {
+        return malloc(new_size);
     }
 
-    if (magic == LARGE_MAGIC) {
-        struct large_hdr *hdr = (struct large_hdr *)page_base;
-        size_t new_pages =
-            (sizeof(struct large_hdr) + new_size + PAGE_SIZE - 1) / PAGE_SIZE;
-        /* Same page count - update the size field in-place. */
-        if (new_pages == hdr->pages) {
-            hdr->size = new_size;
-            return addr;
+    if (!new_size) {
+        free(address);
+
+        return NULL;
+    }
+
+    uintptr_t page_base = (uintptr_t)address & ~(KERNEL_PAGE_SIZE - 1);
+    uint32_t magic = *(uint32_t *)page_base;
+    size_t old_size;
+
+    if (magic == SLAB_MAGIC) {
+        struct slab_page *page = (struct slab_page *)page_base;
+        old_size = page->cache->object_size;
+
+        if (new_size <= old_size) {
+            return address;
         }
-        void *newp = malloc(new_size);
-        if (!newp) return NULL;
-        size_t copy = hdr->size < new_size ? hdr->size : new_size;
-        __builtin_memcpy(newp, addr, copy);
-        mmu_free_frames((void *)(page_base - HHDM_HIGHER_HALF),
-                        (uint64_t)hdr->pages);
-        return newp;
+    } else if (magic == LARGE_MAGIC) {
+        struct large_header *header = (struct large_header *)page_base;
+        KERNEL_ASSERT(address == (void *)(header + 1));
+
+        size_t new_pages = large_page_count(new_size);
+
+        if (!new_pages) {
+            return NULL;
+        }
+
+        old_size = header->size;
+
+        if (new_pages == header->pages) {
+            header->size = new_size;
+
+            return address;
+        }
+    } else {
+        SUBSYS_PANIC("slab", "realloc: corrupt page magic - double-free or bad pointer");
     }
 
-    SUBSYS_PANIC("slab", "realloc: corrupt page magic - double-free or bad pointer");
+    void *replacement = malloc(new_size);
+
+    if (!replacement) {
+        return NULL;
+    }
+
+    __builtin_memcpy(replacement, address, old_size < new_size ? old_size : new_size);
+    free(address);
+
+    return replacement;
 }
 
-/* -- Initialise all caches ---------------------------------------------- */
+/* Warm every cache before publishing the heap; these pages remain cache-owned. */
+void slab_init(void) {
+    KERNEL_ASSERT(!heap_ready && !kernel_interrupt_depth());
 
-void __init slab_init(void) {
-    /*
-     * Pre-warm each cache with one page so the very first malloc in each
-     * class doesn't race with page allocation in hot paths.
-     */
-    for (size_t i = 0; i < NCACHES; i++) {
-        bool s = spinlock_acquire(&caches[i].lock);
-        slab_new_page(&caches[i]);
-        spinlock_release(&caches[i].lock, s);
-        KINFO("slab", "cache[%zu] obj_size=%zu cap=%u",
-              i, caches[i].obj_size, caches[i].pages->capacity);
+    for (size_t cache_index = 0; cache_index < sizeof(caches) / sizeof(caches[0]); ++cache_index) {
+        bool interrupts_enabled = spinlock_acquire(&caches[cache_index].lock);
+        struct slab_page *page = slab_new_page(&caches[cache_index]);
+        spinlock_release(&caches[cache_index].lock, interrupts_enabled);
+        KERNEL_ASSERT(page != NULL);
     }
+
+    heap_ready = true;
 }

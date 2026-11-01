@@ -17,47 +17,41 @@
  */
 
 #include <kernel/vfs.h>
-#include <kernel/mmu.h>
+#include <kernel/heap.h>
+#include <kernel/strings.h>
 #include <kernel/panic.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
 
-extern size_t strlen(const char *s);
-extern int    strcmp(const char *s1, const char *s2);
-extern char  *strdup(const char *s);
+/* Inode number allocator */
 
-/* ------------------------------------------------------------------ */
-/* Inode number allocator                                              */
-/* ------------------------------------------------------------------ */
+static uint64_t next_tmpfs_inode_number = 1;
 
-static uint64_t tmpfs_next_ino = 1;
-
-static uint64_t alloc_ino(void) {
-    return __atomic_fetch_add(&tmpfs_next_ino, 1ULL, __ATOMIC_RELAXED);
+/* Allocate an inode identity independently of directory or file locks. */
+static uint64_t allocate_inode_number(void) {
+    return __atomic_fetch_add(&next_tmpfs_inode_number, 1ULL, __ATOMIC_RELAXED);
 }
 
-/* ------------------------------------------------------------------ */
-/* tmpfs private data structures                                       */
-/* ------------------------------------------------------------------ */
+/* tmpfs private data structures */
 
 /*
  * tmpfs_file_t - private data for a regular-file inode.
  * Protected by the owning inode's lock.
  */
 typedef struct {
-    uint8_t *buf;       /* heap buffer holding file content */
-    size_t   size;      /* number of valid bytes in buf */
-    size_t   capacity;  /* allocated size of buf */
+    uint8_t *buffer; /* heap buffer holding file content */
+    size_t size;     /* number of valid bytes in buffer */
+    size_t capacity; /* allocated size of buffer */
 } tmpfs_file_t;
 
 /*
  * tmpfs_dentry_t - one entry in a directory's child list.
  */
 typedef struct {
-    char        *name;   /* heap-allocated NUL-terminated name */
-    inode_t     *inode;  /* held ref on the child inode */
-    list_node_t  node;   /* linkage in tmpfs_dir_t.entries */
+    char *name;       /* heap-allocated NUL-terminated name */
+    inode_t *inode;   /* held ref on the child inode */
+    list_node_t node; /* linkage in tmpfs_dir_t.entries */
 } tmpfs_dentry_t;
 
 /*
@@ -65,531 +59,753 @@ typedef struct {
  * Protected by the owning inode's lock.
  */
 typedef struct {
-    list_head_t entries; /* tmpfs_dentry_t nodes */
-    uint32_t    count;   /* number of entries (not counting . and ..) */
+    list_head_t entries;  /* tmpfs_dentry_t nodes */
+    uint32_t entry_count; /* number of entries (not counting . and ..) */
 } tmpfs_dir_t;
 
-/* ------------------------------------------------------------------ */
-/* Forward declarations                                                */
-/* ------------------------------------------------------------------ */
+/* Forward declarations */
 
 static const inode_ops_t tmpfs_dir_inode_ops;
 static const inode_ops_t tmpfs_file_inode_ops;
-static const file_ops_t  tmpfs_file_file_ops;
+static const file_ops_t tmpfs_file_operations;
 
-/* ------------------------------------------------------------------ */
-/* Inode allocation                                                    */
-/* ------------------------------------------------------------------ */
+/* Inode allocation */
 
+/* Allocate one owned inode and its directory or regular-file private storage. */
 static inode_t *tmpfs_alloc_inode(uint32_t mode) {
     inode_t *inode = malloc(sizeof(inode_t));
-    if (!inode) return NULL;
 
-    inode->ino      = alloc_ino();
-    inode->mode     = mode;
-    inode->size     = 0;
-    inode->uid      = 0;
-    inode->gid      = 0;
-    inode->rdev     = 0;
-    inode->nlink    = 1;
+    if (!inode) {
+        return NULL;
+    }
+
+    inode->ino = allocate_inode_number();
+    inode->mode = mode;
+    inode->size = 0;
+    inode->uid = 0;
+    inode->gid = 0;
+    inode->rdev = 0;
+    inode->nlink = 1;
     inode->refcount = 1;
-    inode->lock     = (spinlock_t)SPINLOCK_ZERO;
-    inode->private  = NULL;
+    inode->lock = (spinlock_t)SPINLOCK_ZERO;
+    inode->private = NULL;
 
     if (S_ISDIR(mode)) {
         inode->ops = &tmpfs_dir_inode_ops;
-        tmpfs_dir_t *d = malloc(sizeof(tmpfs_dir_t));
-        if (!d) { free(inode); return NULL; }
-        list_head_init(&d->entries);
-        d->count    = 0;
-        inode->private = d;
+
+        tmpfs_dir_t *directory_data = malloc(sizeof(tmpfs_dir_t));
+
+        if (!directory_data) {
+            free(inode);
+
+            return NULL;
+        }
+
+        list_head_init(&directory_data->entries);
+        directory_data->entry_count = 0;
+        inode->private = directory_data;
     } else {
         inode->ops = &tmpfs_file_inode_ops;
-        tmpfs_file_t *f = malloc(sizeof(tmpfs_file_t));
-        if (!f) { free(inode); return NULL; }
-        f->buf      = NULL;
-        f->size     = 0;
-        f->capacity = 0;
-        inode->private = f;
+
+        tmpfs_file_t *file_data = malloc(sizeof(tmpfs_file_t));
+
+        if (!file_data) {
+            free(inode);
+
+            return NULL;
+        }
+
+        file_data->buffer = NULL;
+        file_data->size = 0;
+        file_data->capacity = 0;
+        inode->private = file_data;
     }
 
     return inode;
 }
 
-/* ------------------------------------------------------------------ */
-/* File buffer growth                                                   */
-/* ------------------------------------------------------------------ */
+/* File buffer growth */
 
-static errno_t tmpfs_file_reserve(tmpfs_file_t *f, size_t needed) {
-    if (needed <= f->capacity) return EOK;
-    size_t cap = f->capacity ? f->capacity : 64;
-    while (cap < needed) cap *= 2;
-
-    uint8_t *nb = malloc(cap);
-    if (!nb) return -ENOSPC;
-
-    if (f->buf) {
-        __builtin_memcpy(nb, f->buf, f->size);
-        free(f->buf);
+/* Grow file storage geometrically; the caller holds the owning inode lock. */
+static errno_t tmpfs_file_reserve(tmpfs_file_t *file_data, size_t required_capacity) {
+    if (required_capacity <= file_data->capacity) {
+        return EOK;
     }
+
+    size_t new_capacity = file_data->capacity ? file_data->capacity : 64;
+
+    while (new_capacity < required_capacity) {
+        if (new_capacity > SIZE_MAX / 2) {
+            return -EOVERFLOW;
+        }
+
+        new_capacity *= 2;
+    }
+
+    uint8_t *new_buffer = malloc(new_capacity);
+
+    if (!new_buffer) {
+        return -ENOSPC;
+    }
+
+    if (file_data->buffer) {
+        __builtin_memcpy(new_buffer, file_data->buffer, file_data->size);
+        free(file_data->buffer);
+    }
+
     /* zero the new region */
-    if (cap > f->size)
-        __builtin_memset(nb + f->size, 0, cap - f->size);
-    f->buf      = nb;
-    f->capacity = cap;
+    if (new_capacity > file_data->size) {
+        __builtin_memset(new_buffer + file_data->size, 0, new_capacity - file_data->size);
+    }
+
+    file_data->buffer = new_buffer;
+    file_data->capacity = new_capacity;
+
     return EOK;
 }
 
-/* ------------------------------------------------------------------ */
-/* Directory helpers                                                   */
-/* ------------------------------------------------------------------ */
+/* Directory helpers */
 
 /*
- * dir_find - find a dentry by name; caller must hold inode->lock.
+ * find_directory_entry - find a dentry by name; caller must hold inode->lock.
  * Returns the dentry or NULL.
  */
-static tmpfs_dentry_t *dir_find(tmpfs_dir_t *d, const char *name) {
-    list_node_t *n;
-    list_for_each(n, &d->entries) {
-        tmpfs_dentry_t *de = list_entry(n, tmpfs_dentry_t, node);
-        if (strcmp(de->name, name) == 0) return de;
+static tmpfs_dentry_t *find_directory_entry(tmpfs_dir_t *directory_data, const char *name) {
+    list_node_t *entry_node;
+    list_for_each(entry_node, &directory_data->entries) {
+        tmpfs_dentry_t *entry = list_entry(entry_node, tmpfs_dentry_t, node);
+
+        if (strcmp(entry->name, name) == 0) {
+            return entry;
+        }
     }
+
     return NULL;
 }
 
 /*
- * dir_add - add a new dentry pointing to child; caller must hold inode->lock.
+ * add_directory_entry - add a new dentry pointing to child; caller must hold inode->lock.
  * Takes one additional reference on child (directory entry owns a ref).
  * Returns 0 on success, -ENOSPC on OOM.
  */
-static errno_t dir_add(tmpfs_dir_t *d, const char *name, inode_t *child) {
-    tmpfs_dentry_t *de = malloc(sizeof(tmpfs_dentry_t));
-    if (!de) return -ENOSPC;
+static errno_t add_directory_entry(tmpfs_dir_t *directory_data, const char *name, inode_t *child) {
+    tmpfs_dentry_t *entry = malloc(sizeof(tmpfs_dentry_t));
 
-    de->name = strdup(name);
-    if (!de->name) { free(de); return -ENOSPC; }
-
-    inode_ref(child);
-    de->inode = child;
-    list_node_init(&de->node);
-    list_push_back(&d->entries, &de->node);
-    d->count++;
-    return EOK;
-}
-
-/* ------------------------------------------------------------------ */
-/* Directory inode operations                                          */
-/* ------------------------------------------------------------------ */
-
-static errno_t tmpfs_dir_lookup(inode_t *dir, const char *name,
-                                 inode_t **out) {
-    tmpfs_dir_t *d = (tmpfs_dir_t *)dir->private;
-    bool irq = spinlock_acquire(&dir->lock);
-    tmpfs_dentry_t *de = dir_find(d, name);
-    if (de) { inode_ref(de->inode); *out = de->inode; }
-    spinlock_release(&dir->lock, irq);
-    return de ? EOK : -ENOENT;
-}
-
-static errno_t tmpfs_dir_create(inode_t *dir, const char *name, uint32_t mode,
-                                 inode_t **out) {
-    tmpfs_dir_t *d = (tmpfs_dir_t *)dir->private;
-
-    bool irq = spinlock_acquire(&dir->lock);
-    if (dir_find(d, name)) {
-        spinlock_release(&dir->lock, irq);
-        return -EEXIST;
-    }
-    spinlock_release(&dir->lock, irq);
-
-    inode_t *child = tmpfs_alloc_inode(mode);
-    if (!child) return -ENOSPC;
-
-    irq = spinlock_acquire(&dir->lock);
-    errno_t e = dir_add(d, name, child);
-    spinlock_release(&dir->lock, irq);
-
-    if (e < 0) { inode_unref(child); return e; }
-
-    /* Return with one ref (the caller's ref; dir entry holds another) */
-    *out = child;
-    return EOK;
-}
-
-static errno_t tmpfs_dir_mkdir(inode_t *dir, const char *name, uint32_t mode) {
-    inode_t *child = NULL;
-    errno_t e = tmpfs_dir_create(dir, name,
-                                  (mode & 0777u) | S_IFDIR, &child);
-    if (e < 0) return e;
-    inode_unref(child);   /* caller doesn't need it; dir holds ref */
-    return EOK;
-}
-
-static errno_t tmpfs_dir_unlink(inode_t *dir, const char *name) {
-    tmpfs_dir_t *d = (tmpfs_dir_t *)dir->private;
-    bool irq = spinlock_acquire(&dir->lock);
-
-    tmpfs_dentry_t *de = dir_find(d, name);
-    if (!de) { spinlock_release(&dir->lock, irq); return -ENOENT; }
-
-    list_remove(&de->node);
-    d->count--;
-    spinlock_release(&dir->lock, irq);
-
-    inode_unref(de->inode);
-    free(de->name);
-    free(de);
-    return EOK;
-}
-
-static errno_t tmpfs_dir_readdir(inode_t *dir, uint64_t idx,
-                                  char *name_out, size_t name_max,
-                                  inode_t **inode_out) {
-    /* idx 0 is always "." (self) */
-    if (idx == 0) {
-        if (name_max < 2) return -EINVAL;
-        name_out[0] = '.'; name_out[1] = '\0';
-        inode_ref(dir);
-        *inode_out = dir;
-        return EOK;
-    }
-    idx--;   /* actual entry index */
-
-    tmpfs_dir_t *d = (tmpfs_dir_t *)dir->private;
-    bool irq = spinlock_acquire(&dir->lock);
-
-    uint64_t i = 0;
-    list_node_t *n;
-    list_for_each(n, &d->entries) {
-        if (i == idx) {
-            tmpfs_dentry_t *de = list_entry(n, tmpfs_dentry_t, node);
-            size_t nlen = strlen(de->name);
-            if (nlen >= name_max) nlen = name_max - 1;
-            __builtin_memcpy(name_out, de->name, nlen);
-            name_out[nlen] = '\0';
-            inode_ref(de->inode);
-            *inode_out = de->inode;
-            spinlock_release(&dir->lock, irq);
-            return EOK;
-        }
-        i++;
-    }
-    spinlock_release(&dir->lock, irq);
-    return -ENOENT;
-}
-
-static errno_t tmpfs_dir_open(inode_t *inode, int flags, file_t **out) {
-    (void)flags;
-    /* Opening a directory returns a file_t for readdir use; no file ops needed */
-    file_t *f = file_alloc(inode, flags, NULL);
-    if (!f) return -ENOSPC;
-    *out = f;
-    return EOK;
-}
-
-static errno_t tmpfs_dir_stat(inode_t *inode, vfs_stat_t *out) {
-    bool irq = spinlock_acquire(&inode->lock);
-    out->ino     = inode->ino;
-    out->mode    = inode->mode;
-    out->nlink   = inode->nlink + 2;  /* . and .. */
-    out->uid     = inode->uid;
-    out->gid     = inode->gid;
-    out->size    = ((tmpfs_dir_t *)inode->private)->count * 32ULL;
-    out->blksize = 4096;
-    out->blocks  = 0;
-    out->rdev    = 0;
-    spinlock_release(&inode->lock, irq);
-    return EOK;
-}
-
-static void tmpfs_dir_destroy(inode_t *inode) {
-    tmpfs_dir_t *d = (tmpfs_dir_t *)inode->private;
-    if (!d) return;
-    list_node_t *n, *tmp;
-    list_for_each_safe(n, tmp, &d->entries) {
-        tmpfs_dentry_t *de = list_entry(n, tmpfs_dentry_t, node);
-        inode_unref(de->inode);
-        free(de->name);
-        free(de);
-    }
-    free(d);
-    inode->private = NULL;
-}
-
-static errno_t tmpfs_dir_rename(inode_t *old_dir, const char *old_name,
-                                 inode_t *new_dir, const char *new_name) {
-    tmpfs_dir_t *od = (tmpfs_dir_t *)old_dir->private;
-    tmpfs_dir_t *nd = (tmpfs_dir_t *)new_dir->private;
-
-    if (old_dir == new_dir) {
-        /* Same-directory rename: just update the dentry name */
-        bool irq = spinlock_acquire(&old_dir->lock);
-        tmpfs_dentry_t *de = dir_find(od, old_name);
-        if (!de) { spinlock_release(&old_dir->lock, irq); return -ENOENT; }
-        /* Remove any existing entry with new_name */
-        tmpfs_dentry_t *existing = dir_find(od, new_name);
-        inode_t *old_inode = NULL;
-        if (existing) {
-            list_remove(&existing->node);
-            od->count--;
-            old_inode = existing->inode;
-            free(existing->name);
-            free(existing);
-        }
-        char *new_copy = strdup(new_name);
-        if (!new_copy) {
-            /* Restore existing if we removed it */
-            spinlock_release(&old_dir->lock, irq);
-            if (old_inode) inode_unref(old_inode);
-            return -ENOSPC;
-        }
-        free(de->name);
-        de->name = new_copy;
-        spinlock_release(&old_dir->lock, irq);
-        if (old_inode) inode_unref(old_inode);
-        return EOK;
-    }
-
-    /* Cross-directory rename */
-    /* Step 1: detach from old_dir */
-    bool irq = spinlock_acquire(&old_dir->lock);
-    tmpfs_dentry_t *de = dir_find(od, old_name);
-    if (!de) { spinlock_release(&old_dir->lock, irq); return -ENOENT; }
-    list_remove(&de->node);
-    od->count--;
-    spinlock_release(&old_dir->lock, irq);
-
-    char *new_copy = strdup(new_name);
-    if (!new_copy) {
-        /* Roll back */
-        irq = spinlock_acquire(&old_dir->lock);
-        list_push_back(&od->entries, &de->node);
-        od->count++;
-        spinlock_release(&old_dir->lock, irq);
+    if (!entry) {
         return -ENOSPC;
     }
 
-    /* Step 2: insert into new_dir (displacing any existing entry) */
-    irq = spinlock_acquire(&new_dir->lock);
-    tmpfs_dentry_t *existing = dir_find(nd, new_name);
-    inode_t *old_inode = NULL;
-    if (existing) {
-        list_remove(&existing->node);
-        nd->count--;
-        old_inode = existing->inode;
-        free(existing->name);
-        free(existing);
+    entry->name = strdup(name);
+
+    if (!entry->name) {
+        free(entry);
+
+        return -ENOSPC;
     }
-    free(de->name);
-    de->name = new_copy;
-    list_node_init(&de->node);
-    list_push_back(&nd->entries, &de->node);
-    nd->count++;
-    spinlock_release(&new_dir->lock, irq);
 
-    if (old_inode) inode_unref(old_inode);
+    inode_ref(child);
+    entry->inode = child;
+    list_node_init(&entry->node);
+    list_push_back(&directory_data->entries, &entry->node);
+    directory_data->entry_count++;
+
     return EOK;
 }
 
-static const inode_ops_t tmpfs_dir_inode_ops = {
-    .lookup  = tmpfs_dir_lookup,
-    .create  = tmpfs_dir_create,
-    .mkdir   = tmpfs_dir_mkdir,
-    .unlink  = tmpfs_dir_unlink,
-    .readdir = tmpfs_dir_readdir,
-    .open    = tmpfs_dir_open,
-    .stat    = tmpfs_dir_stat,
-    .destroy = tmpfs_dir_destroy,
-    .rename  = tmpfs_dir_rename,
-};
+/* Directory inode operations */
 
-/* ------------------------------------------------------------------ */
-/* File inode operations                                               */
-/* ------------------------------------------------------------------ */
+/* Retain the child inode while the directory lock protects its entry. */
+static errno_t tmpfs_dir_lookup(inode_t *directory, const char *name, inode_t **inode_out) {
+    tmpfs_dir_t *directory_data = (tmpfs_dir_t *)directory->private;
+    bool interrupts_enabled = spinlock_acquire(&directory->lock);
+    tmpfs_dentry_t *entry = find_directory_entry(directory_data, name);
 
-static errno_t tmpfs_file_open(inode_t *inode, int flags, file_t **out) {
-    if (flags & O_TRUNC) {
-        tmpfs_file_t *fd = (tmpfs_file_t *)inode->private;
-        bool irq = spinlock_acquire(&inode->lock);
-        fd->size  = 0;
-        inode->size = 0;
-        spinlock_release(&inode->lock, irq);
+    if (entry) {
+        inode_ref(entry->inode);
+        *inode_out = entry->inode;
     }
-    file_t *f = file_alloc(inode, flags, &tmpfs_file_file_ops);
-    if (!f) return -ENOSPC;
-    *out = f;
+
+    spinlock_release(&directory->lock, interrupts_enabled);
+
+    return entry ? EOK : -ENOENT;
+}
+
+/* Allocate a child and publish its directory reference, returning the allocation reference. */
+static errno_t tmpfs_dir_create(
+    inode_t *directory, const char *name, uint32_t mode, inode_t **inode_out) {
+    tmpfs_dir_t *directory_data = (tmpfs_dir_t *)directory->private;
+
+    bool interrupts_enabled = spinlock_acquire(&directory->lock);
+
+    if (find_directory_entry(directory_data, name)) {
+        spinlock_release(&directory->lock, interrupts_enabled);
+
+        return -EEXIST;
+    }
+
+    spinlock_release(&directory->lock, interrupts_enabled);
+
+    inode_t *child = tmpfs_alloc_inode(mode);
+
+    if (!child) {
+        return -ENOSPC;
+    }
+
+    interrupts_enabled = spinlock_acquire(&directory->lock);
+
+    errno_t status = find_directory_entry(directory_data, name)
+                         ? -EEXIST
+                         : add_directory_entry(directory_data, name, child);
+    spinlock_release(&directory->lock, interrupts_enabled);
+
+    if (status < 0) {
+        inode_unref(child);
+
+        return status;
+    }
+
+    /* Return with one ref (the caller's ref; dir entry holds another) */
+    *inode_out = child;
+
     return EOK;
 }
 
-static errno_t tmpfs_file_stat(inode_t *inode, vfs_stat_t *out) {
-    bool irq = spinlock_acquire(&inode->lock);
-    out->ino     = inode->ino;
-    out->mode    = inode->mode;
-    out->nlink   = inode->nlink;
-    out->uid     = inode->uid;
-    out->gid     = inode->gid;
-    out->size    = inode->size;
-    out->blksize = 4096;
-    out->blocks  = (int64_t)((inode->size + 511) / 512);
-    out->rdev    = 0;
-    spinlock_release(&inode->lock, irq);
+/* Create a directory and release the caller reference retained by the create helper. */
+static errno_t tmpfs_dir_mkdir(inode_t *directory, const char *name, uint32_t mode) {
+    inode_t *child = NULL;
+    errno_t status = tmpfs_dir_create(directory, name, (mode & 0777u) | S_IFDIR, &child);
+
+    if (status < 0) {
+        return status;
+    }
+
+    inode_unref(child); /* caller doesn't need it; dir holds ref */
     return EOK;
 }
 
-static void tmpfs_file_destroy(inode_t *inode) {
-    tmpfs_file_t *f = (tmpfs_file_t *)inode->private;
-    if (!f) return;
-    if (f->buf) free(f->buf);
-    free(f);
+/* Detach under the directory lock, then release the entry's inode reference outside it. */
+static errno_t tmpfs_dir_unlink(inode_t *directory, const char *name) {
+    tmpfs_dir_t *directory_data = (tmpfs_dir_t *)directory->private;
+    bool interrupts_enabled = spinlock_acquire(&directory->lock);
+
+    tmpfs_dentry_t *entry = find_directory_entry(directory_data, name);
+
+    if (!entry) {
+        spinlock_release(&directory->lock, interrupts_enabled);
+
+        return -ENOENT;
+    }
+
+    list_remove(&entry->node);
+    directory_data->entry_count--;
+    spinlock_release(&directory->lock, interrupts_enabled);
+
+    inode_unref(entry->inode);
+    free(entry->name);
+    free(entry);
+
+    return EOK;
+}
+
+/* Return one referenced child by index; index zero names the directory itself. */
+static errno_t tmpfs_dir_readdir(inode_t *directory, uint64_t entry_index, char *name_out,
+    size_t name_capacity, inode_t **inode_out) {
+    /* entry_index 0 is always "." (self) */
+    if (entry_index == 0) {
+        if (name_capacity < 2) {
+            return -EINVAL;
+        }
+
+        name_out[0] = '.';
+        name_out[1] = '\0';
+        inode_ref(directory);
+        *inode_out = directory;
+
+        return EOK;
+    }
+
+    entry_index--; /* actual entry index */
+
+    tmpfs_dir_t *directory_data = (tmpfs_dir_t *)directory->private;
+    bool interrupts_enabled = spinlock_acquire(&directory->lock);
+
+    uint64_t current_entry_index = 0;
+    list_node_t *entry_node;
+    list_for_each(entry_node, &directory_data->entries) {
+        if (current_entry_index == entry_index) {
+            tmpfs_dentry_t *entry = list_entry(entry_node, tmpfs_dentry_t, node);
+            size_t name_length = strlen(entry->name);
+
+            if (name_length >= name_capacity) {
+                name_length = name_capacity - 1;
+            }
+
+            __builtin_memcpy(name_out, entry->name, name_length);
+            name_out[name_length] = '\0';
+            inode_ref(entry->inode);
+            *inode_out = entry->inode;
+            spinlock_release(&directory->lock, interrupts_enabled);
+
+            return EOK;
+        }
+
+        current_entry_index++;
+    }
+
+    spinlock_release(&directory->lock, interrupts_enabled);
+
+    return -ENOENT;
+}
+
+/* Create an open description for enumeration without regular-file operations. */
+static errno_t tmpfs_dir_open(inode_t *inode, int flags, file_t **file_out) {
+    (void)flags;
+
+    /* Opening a directory returns a file_t for readdir use; no file ops needed */
+    file_t *file = file_alloc(inode, flags, NULL);
+
+    if (!file) {
+        return -ENOSPC;
+    }
+    *file_out = file;
+
+    return EOK;
+}
+
+/* Snapshot directory metadata while its child list is locked. */
+static errno_t tmpfs_dir_stat(inode_t *inode, vfs_stat_t *stat_out) {
+    bool interrupts_enabled = spinlock_acquire(&inode->lock);
+    stat_out->ino = inode->ino;
+    stat_out->mode = inode->mode;
+    stat_out->nlink = inode->nlink + 2; /* . and .. */
+    stat_out->uid = inode->uid;
+    stat_out->gid = inode->gid;
+    stat_out->size = ((tmpfs_dir_t *)inode->private)->entry_count * 32ULL;
+    stat_out->blksize = 4096;
+    stat_out->blocks = 0;
+    stat_out->rdev = 0;
+    spinlock_release(&inode->lock, interrupts_enabled);
+
+    return EOK;
+}
+
+/* Release every child-entry reference before freeing the private directory state. */
+static void tmpfs_dir_destroy(inode_t *inode) {
+    tmpfs_dir_t *directory_data = (tmpfs_dir_t *)inode->private;
+
+    if (!directory_data) {
+        return;
+    }
+
+    list_node_t *entry_node, *next_node;
+    list_for_each_safe(entry_node, next_node, &directory_data->entries) {
+        tmpfs_dentry_t *entry = list_entry(entry_node, tmpfs_dentry_t, node);
+        inode_unref(entry->inode);
+        free(entry->name);
+        free(entry);
+    }
+
+    free(directory_data);
     inode->private = NULL;
 }
 
-static errno_t tmpfs_file_truncate(inode_t *inode, uint64_t new_size) {
-    tmpfs_file_t *tf = (tmpfs_file_t *)inode->private;
-    bool irq = spinlock_acquire(&inode->lock);
+/* Move or rename an entry, transferring its existing child reference between directories. */
+/* Prepare allocation before locking. Ordering the two inode locks by address
+ * makes cross-directory moves atomic to lookups without an ABBA deadlock. */
+static errno_t tmpfs_dir_rename(inode_t *source_directory, const char *source_name,
+    inode_t *destination_directory, const char *destination_name) {
+    char *replacement_name = strdup(destination_name);
 
-    if (new_size > tf->size) {
+    if (!replacement_name) {
+        return -ENOSPC;
+    }
+
+    inode_t *first_directory = (uintptr_t)source_directory < (uintptr_t)destination_directory
+                                   ? source_directory
+                                   : destination_directory;
+    inode_t *second_directory =
+        first_directory == source_directory ? destination_directory : source_directory;
+    bool first_interrupts = spinlock_acquire(&first_directory->lock);
+    bool second_interrupts = false;
+
+    if (first_directory != second_directory) {
+        second_interrupts = spinlock_acquire(&second_directory->lock);
+    }
+
+    tmpfs_dir_t *source_data = source_directory->private;
+    tmpfs_dir_t *destination_data = destination_directory->private;
+    tmpfs_dentry_t *source_entry = find_directory_entry(source_data, source_name);
+    tmpfs_dentry_t *destination_entry = find_directory_entry(destination_data, destination_name);
+    errno_t status = EOK;
+    char *previous_name = NULL;
+    tmpfs_dentry_t *displaced_entry = NULL;
+
+    if (!source_entry) {
+        status = -ENOENT;
+    } else if (source_entry == destination_entry) { /* Existing identical name is a no-op. */
+    } else if (S_ISDIR(source_entry->inode->mode)) {
+        status = -ENOSYS; /* directory cycle checks not implemented */
+    } else if (destination_entry && S_ISDIR(destination_entry->inode->mode)) {
+        status = -EISDIR;
+    } else {
+        if (destination_entry) {
+            list_remove(&destination_entry->node);
+            --destination_data->entry_count;
+            displaced_entry = destination_entry;
+        }
+
+        list_remove(&source_entry->node);
+        --source_data->entry_count;
+        previous_name = source_entry->name;
+        source_entry->name = replacement_name;
+        replacement_name = NULL;
+        list_push_back(&destination_data->entries, &source_entry->node);
+        ++destination_data->entry_count;
+    }
+
+    if (first_directory != second_directory) {
+        spinlock_release(&second_directory->lock, second_interrupts);
+    }
+
+    spinlock_release(&first_directory->lock, first_interrupts);
+    free(replacement_name);
+    free(previous_name);
+
+    if (displaced_entry) {
+        inode_unref(displaced_entry->inode);
+        free(displaced_entry->name);
+        free(displaced_entry);
+    }
+
+    return status;
+}
+
+static const inode_ops_t tmpfs_dir_inode_ops = {
+    .lookup = tmpfs_dir_lookup,
+    .create = tmpfs_dir_create,
+    .mkdir = tmpfs_dir_mkdir,
+    .unlink = tmpfs_dir_unlink,
+    .readdir = tmpfs_dir_readdir,
+    .open = tmpfs_dir_open,
+    .stat = tmpfs_dir_stat,
+    .destroy = tmpfs_dir_destroy,
+    .rename = tmpfs_dir_rename,
+};
+
+/* File inode operations */
+
+/* Apply truncation under the inode lock before allocating an open-file description. */
+static errno_t tmpfs_file_open(inode_t *inode, int flags, file_t **file_out) {
+    if (flags & O_TRUNC) {
+        tmpfs_file_t *file_data = (tmpfs_file_t *)inode->private;
+        bool interrupts_enabled = spinlock_acquire(&inode->lock);
+        file_data->size = 0;
+        inode->size = 0;
+        spinlock_release(&inode->lock, interrupts_enabled);
+    }
+
+    file_t *file = file_alloc(inode, flags, &tmpfs_file_operations);
+
+    if (!file) {
+        return -ENOSPC;
+    }
+    *file_out = file;
+
+    return EOK;
+}
+
+/* Snapshot regular-file metadata under the inode lock. */
+static errno_t tmpfs_file_stat(inode_t *inode, vfs_stat_t *stat_out) {
+    bool interrupts_enabled = spinlock_acquire(&inode->lock);
+    stat_out->ino = inode->ino;
+    stat_out->mode = inode->mode;
+    stat_out->nlink = inode->nlink;
+    stat_out->uid = inode->uid;
+    stat_out->gid = inode->gid;
+    stat_out->size = inode->size;
+    stat_out->blksize = 4096;
+    stat_out->blocks = (int64_t)((inode->size + 511) / 512);
+    stat_out->rdev = 0;
+    spinlock_release(&inode->lock, interrupts_enabled);
+
+    return EOK;
+}
+
+/* Free the content buffer when the final inode reference is released. */
+static void tmpfs_file_destroy(inode_t *inode) {
+    tmpfs_file_t *file_data = (tmpfs_file_t *)inode->private;
+
+    if (!file_data) {
+        return;
+    }
+
+    if (file_data->buffer) {
+        free(file_data->buffer);
+    }
+
+    free(file_data);
+    inode->private = NULL;
+}
+
+/* Resize visible content, zeroing extensions while retaining capacity after shrink. */
+static errno_t tmpfs_file_truncate(inode_t *inode, uint64_t new_size) {
+    tmpfs_file_t *file_data = (tmpfs_file_t *)inode->private;
+    bool interrupts_enabled = spinlock_acquire(&inode->lock);
+
+    if (new_size > file_data->size) {
         /* Extend: reserve and zero the gap */
-        errno_t e = tmpfs_file_reserve(tf, (size_t)new_size);
-        if (e < 0) { spinlock_release(&inode->lock, irq); return e; }
-        if (new_size > tf->size)
-            __builtin_memset(tf->buf + tf->size, 0,
-                             (size_t)(new_size - tf->size));
-        tf->size    = (size_t)new_size;
+        errno_t status = tmpfs_file_reserve(file_data, (size_t)new_size);
+
+        if (status < 0) {
+            spinlock_release(&inode->lock, interrupts_enabled);
+
+            return status;
+        }
+
+        if (new_size > file_data->size) {
+            __builtin_memset(
+                file_data->buffer + file_data->size, 0, (size_t)(new_size - file_data->size));
+        }
+
+        file_data->size = (size_t)new_size;
         inode->size = new_size;
-    } else if (new_size < tf->size) {
+    } else if (new_size < file_data->size) {
         /* Shrink: just update the length; don't free memory */
-        tf->size    = (size_t)new_size;
+        file_data->size = (size_t)new_size;
         inode->size = new_size;
     }
 
-    spinlock_release(&inode->lock, irq);
+    spinlock_release(&inode->lock, interrupts_enabled);
+
     return EOK;
 }
 
 static const inode_ops_t tmpfs_file_inode_ops = {
-    .lookup   = NULL,
-    .create   = NULL,
-    .mkdir    = NULL,
-    .unlink   = NULL,
-    .readdir  = NULL,
-    .open     = tmpfs_file_open,
-    .stat     = tmpfs_file_stat,
-    .destroy  = tmpfs_file_destroy,
+    .lookup = NULL,
+    .create = NULL,
+    .mkdir = NULL,
+    .unlink = NULL,
+    .readdir = NULL,
+    .open = tmpfs_file_open,
+    .stat = tmpfs_file_stat,
+    .destroy = tmpfs_file_destroy,
     .truncate = tmpfs_file_truncate,
 };
 
-/* ------------------------------------------------------------------ */
-/* File operations (for open file_t)                                   */
-/* ------------------------------------------------------------------ */
+/* File operations (for open file_t) */
 
-static errno_t tmpfs_fops_read(file_t *f, void *buf, size_t n,
-                                size_t *out) {
-    inode_t      *inode = f->inode;
-    tmpfs_file_t *tf    = (tmpfs_file_t *)inode->private;
-    *out = 0;
+/* Lock the open-file position before inode data, then advance by bytes actually read. */
+static errno_t tmpfs_fops_read(
+    file_t *file, void *buffer, size_t byte_count, size_t *bytes_transferred) {
+    inode_t *inode = file->inode;
+    tmpfs_file_t *file_data = (tmpfs_file_t *)inode->private;
+    *bytes_transferred = 0;
 
-    bool f_irq = spinlock_acquire(&f->lock);
-    bool i_irq = spinlock_acquire(&inode->lock);
+    bool file_interrupts_enabled = spinlock_acquire(&file->lock);
+    bool inode_interrupts_enabled = spinlock_acquire(&inode->lock);
 
-    int64_t pos = f->pos;
-    if (pos < 0 || (uint64_t)pos >= tf->size) {
-        spinlock_release(&inode->lock, i_irq);
-        spinlock_release(&f->lock, f_irq);
-        return EOK;   /* EOF */
+    int64_t position = file->pos;
+
+    if (position < 0 || (uint64_t)position >= file_data->size) {
+        spinlock_release(&inode->lock, inode_interrupts_enabled);
+        spinlock_release(&file->lock, file_interrupts_enabled);
+
+        return EOK; /* EOF */
     }
 
-    size_t avail = tf->size - (size_t)pos;
-    size_t chunk = n < avail ? n : avail;
-    __builtin_memcpy(buf, tf->buf + pos, chunk);
-    f->pos += (int64_t)chunk;
-    *out = chunk;
+    size_t available_bytes = file_data->size - (size_t)position;
+    size_t bytes_to_read = byte_count < available_bytes ? byte_count : available_bytes;
+    __builtin_memcpy(buffer, file_data->buffer + position, bytes_to_read);
+    file->pos += (int64_t)bytes_to_read;
+    *bytes_transferred = bytes_to_read;
 
-    spinlock_release(&inode->lock, i_irq);
-    spinlock_release(&f->lock, f_irq);
+    spinlock_release(&inode->lock, inode_interrupts_enabled);
+    spinlock_release(&file->lock, file_interrupts_enabled);
+
     return EOK;
 }
 
-static errno_t tmpfs_fops_write(file_t *f, const void *buf, size_t n,
-                                 size_t *out) {
-    inode_t      *inode = f->inode;
-    tmpfs_file_t *tf    = (tmpfs_file_t *)inode->private;
-    *out = 0;
-    if (n == 0) return EOK;
+/* Lock position before inode data; append selects EOF while the inode remains locked. */
+static errno_t tmpfs_fops_write(
+    file_t *file, const void *buffer, size_t byte_count, size_t *bytes_transferred) {
+    inode_t *inode = file->inode;
+    tmpfs_file_t *file_data = (tmpfs_file_t *)inode->private;
+    *bytes_transferred = 0;
 
-    bool f_irq = spinlock_acquire(&f->lock);
-    bool i_irq = spinlock_acquire(&inode->lock);
-
-    int64_t pos = f->pos;
-    if (f->flags & O_APPEND) pos = (int64_t)tf->size;
-
-    size_t  new_end = (size_t)pos + n;
-    errno_t e       = tmpfs_file_reserve(tf, new_end);
-    if (e < 0) {
-        spinlock_release(&inode->lock, i_irq);
-        spinlock_release(&f->lock, f_irq);
-        return e;
+    if (byte_count == 0) {
+        return EOK;
     }
 
-    __builtin_memcpy(tf->buf + pos, buf, n);
-    if (new_end > tf->size) {
-        tf->size    = new_end;
-        inode->size = new_end;
-    }
-    f->pos = (int64_t)new_end;
-    *out   = n;
+    bool file_interrupts_enabled = spinlock_acquire(&file->lock);
+    bool inode_interrupts_enabled = spinlock_acquire(&inode->lock);
 
-    spinlock_release(&inode->lock, i_irq);
-    spinlock_release(&f->lock, f_irq);
+    int64_t position = file->pos;
+
+    if (file->flags & O_APPEND) {
+        position = (int64_t)file_data->size;
+    }
+
+    if (position < 0 || byte_count > SIZE_MAX - (uint64_t)position) {
+        spinlock_release(&inode->lock, inode_interrupts_enabled);
+        spinlock_release(&file->lock, file_interrupts_enabled);
+
+        return -EOVERFLOW;
+    }
+
+    size_t write_end = (size_t)position + byte_count;
+    errno_t status = tmpfs_file_reserve(file_data, write_end);
+
+    if (status < 0) {
+        spinlock_release(&inode->lock, inode_interrupts_enabled);
+        spinlock_release(&file->lock, file_interrupts_enabled);
+
+        return status;
+    }
+
+    if ((uint64_t)position > file_data->size) {
+        __builtin_memset(file_data->buffer + file_data->size, 0, position - file_data->size);
+    }
+
+    __builtin_memcpy(file_data->buffer + position, buffer, byte_count);
+
+    if (write_end > file_data->size) {
+        file_data->size = write_end;
+        inode->size = write_end;
+    }
+
+    file->pos = (int64_t)write_end;
+    *bytes_transferred = byte_count;
+
+    spinlock_release(&inode->lock, inode_interrupts_enabled);
+    spinlock_release(&file->lock, file_interrupts_enabled);
+
     return EOK;
 }
 
-static errno_t tmpfs_fops_seek(file_t *f, int64_t offset, int whence,
-                                int64_t *new_pos) {
-    inode_t      *inode = f->inode;
-    tmpfs_file_t *tf    = (tmpfs_file_t *)inode->private;
+/* Resolve the requested origin under both locks and reject negative resulting positions. */
+static errno_t tmpfs_fops_seek(
+    file_t *file, int64_t offset, int whence, int64_t *new_position_out) {
+    inode_t *inode = file->inode;
+    tmpfs_file_t *file_data = (tmpfs_file_t *)inode->private;
 
-    bool f_irq = spinlock_acquire(&f->lock);
-    bool i_irq = spinlock_acquire(&inode->lock);
+    bool file_interrupts_enabled = spinlock_acquire(&file->lock);
+    bool inode_interrupts_enabled = spinlock_acquire(&inode->lock);
 
     int64_t base;
+
     switch (whence) {
-    case SEEK_SET: base = 0;                       break;
-    case SEEK_CUR: base = f->pos;                  break;
-    case SEEK_END: base = (int64_t)tf->size;       break;
+    case SEEK_SET:
+        base = 0;
+        break;
+    case SEEK_CUR:
+        base = file->pos;
+        break;
+    case SEEK_END:
+        base = (int64_t)file_data->size;
+        break;
     default:
-        spinlock_release(&inode->lock, i_irq);
-        spinlock_release(&f->lock, f_irq);
+        spinlock_release(&inode->lock, inode_interrupts_enabled);
+        spinlock_release(&file->lock, file_interrupts_enabled);
+
         return -EINVAL;
     }
 
-    int64_t np = base + offset;
-    if (np < 0) {
-        spinlock_release(&inode->lock, i_irq);
-        spinlock_release(&f->lock, f_irq);
+    if ((offset > 0 && base > INT64_MAX - offset) || (offset < 0 && base < INT64_MIN - offset)) {
+        spinlock_release(&inode->lock, inode_interrupts_enabled);
+        spinlock_release(&file->lock, file_interrupts_enabled);
+
+        return -EOVERFLOW;
+    }
+
+    int64_t new_position = base + offset;
+
+    if (new_position < 0) {
+        spinlock_release(&inode->lock, inode_interrupts_enabled);
+        spinlock_release(&file->lock, file_interrupts_enabled);
+
         return -EINVAL;
     }
 
-    f->pos    = np;
-    *new_pos  = np;
+    file->pos = new_position;
+    *new_position_out = new_position;
 
-    spinlock_release(&inode->lock, i_irq);
-    spinlock_release(&f->lock, f_irq);
+    spinlock_release(&inode->lock, inode_interrupts_enabled);
+    spinlock_release(&file->lock, file_interrupts_enabled);
+
     return EOK;
 }
 
-static const file_ops_t tmpfs_file_file_ops = {
-    .read  = tmpfs_fops_read,
+/* A positioned read holds only the inode lock, leaving file->pos unchanged. */
+static errno_t tmpfs_read_at(
+    file_t *file, void *buffer, size_t length, int64_t offset, size_t *completed) {
+    tmpfs_file_t *data = file->inode->private;
+    bool interrupts_enabled = spinlock_acquire(&file->inode->lock);
+    size_t available = (uint64_t)offset < data->size ? data->size - offset : 0;
+    *completed = length < available ? length : available;
+
+    if (*completed) {
+        __builtin_memcpy(buffer, data->buffer + offset, *completed);
+    }
+
+    spinlock_release(&file->inode->lock, interrupts_enabled);
+
+    return EOK;
+}
+
+/* Snapshot status flags under the file lock, then serialize content growth. */
+static errno_t tmpfs_write_at(
+    file_t *file, const void *buffer, size_t length, int64_t offset, size_t *completed) {
+    bool file_interrupts = spinlock_acquire(&file->lock);
+    bool inode_interrupts = spinlock_acquire(&file->inode->lock);
+    tmpfs_file_t *data = file->inode->private;
+
+    if (file->flags & O_APPEND) {
+        offset = data->size;
+    }
+
+    errno_t status = EOK;
+
+    if (length > SIZE_MAX - (uint64_t)offset) {
+        status = -EOVERFLOW;
+    } else if (length) {
+        size_t end = offset + length;
+        status = tmpfs_file_reserve(data, end);
+
+        if (!status) {
+            /* A prior truncate may leave stale bytes in retained capacity. */
+            if ((uint64_t)offset > data->size) {
+                __builtin_memset(data->buffer + data->size, 0, offset - data->size);
+            }
+
+            __builtin_memcpy(data->buffer + offset, buffer, length);
+
+            if (end > data->size) {
+                data->size = end;
+                file->inode->size = end;
+            }
+            *completed = length;
+        }
+    }
+
+    spinlock_release(&file->inode->lock, inode_interrupts);
+    spinlock_release(&file->lock, file_interrupts);
+
+    return status;
+}
+
+static const file_ops_t tmpfs_file_operations = {
+    .read = tmpfs_fops_read,
+    .read_at = tmpfs_read_at,
+    .write_at = tmpfs_write_at,
     .write = tmpfs_fops_write,
-    .seek  = tmpfs_fops_seek,
+    .seek = tmpfs_fops_seek,
     .ioctl = NULL,
-    .close = NULL,   /* no extra cleanup; file_unref handles inode_unref + free */
+    .close = NULL, /* no extra cleanup; file_unref handles inode_unref + free */
 };
 
-/* ------------------------------------------------------------------ */
-/* Public entry point                                                  */
-/* ------------------------------------------------------------------ */
+/* Public entry point */
 
+/* Return one owned reference to an empty, writable root directory. */
 inode_t *tmpfs_create_root(void) {
     return tmpfs_alloc_inode(S_IFDIR | 0755u);
 }
